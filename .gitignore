@@ -218,3 +218,9 @@ __marimo__/
 .streamlit/secrets.toml
 
 crm.sqlite
+
+backups/
+*.sqlite
+*.sqlite-journal
+*.db
+*.log
