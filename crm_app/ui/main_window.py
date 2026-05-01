@@ -30,6 +30,8 @@ from crm_app.ui.offers_page import OffersPage
 from crm_app.ui.samples_page import SamplesPage
 from crm_app.ui.styles import build_stylesheet
 from crm_app.ui.login_dialog import LoginDialog
+from crm_app.ui.change_password_dialog import ChangePasswordDialog
+from crm_app.services.auth_service import get_user_by_id
 from crm_app.utils.app_paths import get_asset_path
 from crm_app.utils.logging_utils import log_exception
 
@@ -193,6 +195,18 @@ def run(*, active_db_path: str = "") -> int:
     login = LoginDialog()
     if not login.exec():
         return 0
+
+    if login.authenticated_user_id is None:
+        return 0
+
+    user = get_user_by_id(login.authenticated_user_id)
+    if not user:
+        return 0
+
+    if getattr(user, "must_change_password", False):
+        change_dialog = ChangePasswordDialog(user_id=user.id)
+        if not change_dialog.exec():
+            return 0
 
     window = MainWindow(active_db_path=active_db_path)
     window.show()

@@ -24,9 +24,28 @@ def init_database() -> None:
     from crm_app.services.sample_data import seed_sample_data
 
     Base.metadata.create_all(bind=engine)
+    ensure_users_schema()
     ensure_custom_field_schema()
     ensure_default_admin()
     seed_sample_data()
+
+
+def ensure_users_schema() -> None:
+    with engine.begin() as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "users" not in tables:
+            return
+
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(users)")).fetchall()}
+        if "must_change_password" not in columns:
+            connection.execute(
+                text("ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 1")
+            )
 
 
 def ensure_custom_field_schema() -> None:

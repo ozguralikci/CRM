@@ -56,14 +56,50 @@ def authenticate(username: str, password: str) -> User | None:
         return user
 
 
+def get_user_by_id(user_id: int) -> User | None:
+    with get_session() as session:
+        return session.get(User, user_id)
+
+
 def ensure_default_admin() -> None:
     with get_session() as session:
         existing_user = session.scalar(select(User.id).limit(1))
-        if existing_user:
+        if not existing_user:
+            user = User(
+                username="admin",
+                password_hash=hash_password("admin"),
+                must_change_password=True,
+            )
+            session.add(user)
+            session.commit()
+            LOGGER.warning("Default admin user created. Please change password later.")
             return
 
-        user = User(username="admin", password_hash=hash_password("admin"))
-        session.add(user)
+        admin = session.scalar(select(User).where(User.username == "admin").limit(1))
+        if not admin:
+            return
+
+        if verify_password("admin", admin.password_hash):
+            if not admin.must_change_password:
+                admin.must_change_password = True
+                session.commit()
+            LOGGER.warning("Default admin user still uses default password. Please change password later.")
+
+
+def change_password(*, user_id: int, old_password: str, new_password: str) -> None:
+    new_password = (new_password or "").strip()
+    if len(new_password) < 8:
+        raise ValueError("Yeni şifre en az 8 karakter olmalıdır.")
+
+    with get_session() as session:
+        user = session.get(User, user_id)
+        if not user:
+            raise ValueError("Kullanıcı bulunamadı.")
+
+        if not verify_password(old_password or "", user.password_hash):
+            raise ValueError("Eski şifre hatalı.")
+
+        user.password_hash = hash_password(new_password)
+        user.must_change_password = False
         session.commit()
-        LOGGER.warning("Default admin user created. Please change password later.")
 

@@ -22,7 +22,7 @@ class LoginDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Giriş")
         self.setMinimumSize(520, 320)
-        self.authenticated_username: str = ""
+        self.authenticated_user_id: int | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -96,6 +96,6 @@ class LoginDialog(QDialog):
             self.password_input.selectAll()
             self.password_input.setFocus()
             return
-        self.authenticated_username = user.username
+        self.authenticated_user_id = user.id
         self.accept()
 
