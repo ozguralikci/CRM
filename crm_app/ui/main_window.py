@@ -28,6 +28,7 @@ from crm_app.ui.field_management_page import FieldManagementPage
 from crm_app.ui.opportunities_page import OpportunitiesPage
 from crm_app.ui.offers_page import OffersPage
 from crm_app.ui.samples_page import SamplesPage
+from crm_app.ui.research_targets_page import ResearchTargetsPage
 from crm_app.ui.users_page import UsersPage
 from crm_app.ui.styles import build_stylesheet
 from crm_app.ui.login_dialog import LoginDialog
@@ -44,6 +45,7 @@ LOGGER = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     menu_icon_map = {
         "Dashboard": QStyle.StandardPixmap.SP_ComputerIcon,
+        "Arastirma Merkezi": QStyle.StandardPixmap.SP_FileDialogInfoView,
         "Sirketler": QStyle.StandardPixmap.SP_DirIcon,
         "Kisiler": QStyle.StandardPixmap.SP_FileDialogDetailedView,
         "Aksiyonlar": QStyle.StandardPixmap.SP_BrowserReload,
@@ -55,6 +57,7 @@ class MainWindow(QMainWindow):
     }
     base_menu_items = [
         "Dashboard",
+        "Arastirma Merkezi",
         "Sirketler",
         "Kisiler",
         "Aksiyonlar",
@@ -137,6 +140,7 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.pages.setObjectName("PageViewport")
         self.dashboard_page = DashboardPage()
+        self.research_targets_page = ResearchTargetsPage()
         self.companies_page = CompaniesPage()
         self.contacts_page = ContactsPage()
         self.actions_page = ActionsPage()
@@ -147,6 +151,7 @@ class MainWindow(QMainWindow):
         self.users_page = UsersPage() if is_admin else None
 
         self.pages.addWidget(self.dashboard_page)
+        self.pages.addWidget(self.research_targets_page)
         self.pages.addWidget(self.companies_page)
         self.pages.addWidget(self.contacts_page)
         self.pages.addWidget(self.actions_page)
@@ -158,13 +163,14 @@ class MainWindow(QMainWindow):
             self.pages.addWidget(self.users_page)
         self.page_refresh_callbacks = {
             0: ("dashboard", self.dashboard_page.refresh),
-            1: ("companies", self.companies_page.refresh_table),
-            2: ("contacts", self.contacts_page.refresh_table),
-            3: ("actions", self.actions_page.refresh_table),
-            4: ("opportunities", self.opportunities_page.refresh_table),
-            5: ("offers", self.offers_page.refresh_table),
-            6: ("samples", self.samples_page.refresh_table),
-            7: ("field_management", self.field_management_page.refresh_table),
+            1: ("research_targets", self.research_targets_page.refresh_table),
+            2: ("companies", self.companies_page.refresh_table),
+            3: ("contacts", self.contacts_page.refresh_table),
+            4: ("actions", self.actions_page.refresh_table),
+            5: ("opportunities", self.opportunities_page.refresh_table),
+            6: ("offers", self.offers_page.refresh_table),
+            7: ("samples", self.samples_page.refresh_table),
+            8: ("field_management", self.field_management_page.refresh_table),
         }
         if self.users_page is not None:
             self.page_refresh_callbacks[len(self.page_refresh_callbacks)] = ("users", self.users_page.refresh_table)
