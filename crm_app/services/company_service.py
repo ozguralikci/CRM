@@ -100,3 +100,28 @@ def get_company(company_id: int) -> Company | None:
             .where(Company.id == company_id)
         )
         return session.scalars(query).first()
+
+
+def get_company_pipeline_counts() -> dict[str, int]:
+    """
+    Read-only pipeline counters for company.status.
+    Empty/NULL status is counted as 'lead'.
+    """
+    normalized_status = func.coalesce(func.nullif(Company.status, ""), "lead")
+
+    with get_session() as session:
+        total = session.scalar(select(func.count()).select_from(Company)) or 0
+        rows = session.execute(
+            select(normalized_status, func.count()).select_from(Company).group_by(normalized_status)
+        ).all()
+
+    counts = {str(status): int(count) for status, count in rows if status is not None}
+    return {
+        "total": int(total),
+        "lead": counts.get("lead", 0),
+        "contacted": counts.get("contacted", 0),
+        "meeting": counts.get("meeting", 0),
+        "offer": counts.get("offer", 0),
+        "won": counts.get("won", 0),
+        "lost": counts.get("lost", 0),
+    }

@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 
 from crm_app.models import Action, Company
 from crm_app.services.action_service import create_action
-from crm_app.services.company_service import get_company
+from crm_app.services.company_service import get_company, get_company_pipeline_counts
 from crm_app.services.contact_service import create_contact
 from crm_app.services.dashboard_service import (
     get_commercial_metrics,
@@ -102,6 +102,32 @@ class DashboardPage(QWidget):
                 "Satis operasyonlarinizin genel durumunu tek bakista izleyin.",
             )
         )
+
+        self.pipeline_counts_frame = create_toolbar_frame()
+        self.pipeline_counts_frame.setProperty("header_role", "summary")
+        apply_shadow(self.pipeline_counts_frame, blur=12, y_offset=2, alpha=8)
+        pipeline_layout = QHBoxLayout(self.pipeline_counts_frame)
+        pipeline_layout.setContentsMargins(12, 10, 12, 10)
+        pipeline_layout.setSpacing(10)
+
+        self.pipeline_count_labels: dict[str, QLabel] = {}
+        for key, label in [
+            ("total", "Toplam Şirket"),
+            ("lead", "Lead"),
+            ("contacted", "Contacted"),
+            ("meeting", "Meeting"),
+            ("offer", "Offer"),
+            ("won", "Won"),
+            ("lost", "Lost"),
+        ]:
+            chip = QLabel(f"{label}: -")
+            chip.setObjectName("SummaryValue")
+            chip.setProperty("context", "summary-supporting")
+            chip.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            self.pipeline_count_labels[key] = chip
+            pipeline_layout.addWidget(chip)
+        pipeline_layout.addStretch(1)
+        root_layout.addWidget(self.pipeline_counts_frame)
 
         self.cards_section = ResponsiveGridSection(
             min_column_width=260,
@@ -242,6 +268,8 @@ class DashboardPage(QWidget):
 
         metrics = get_dashboard_metrics()
         commercial_metrics = get_commercial_metrics()
+        pipeline_counts = get_company_pipeline_counts()
+        self._populate_pipeline_counts(pipeline_counts)
         cards = [
             ("Toplam Sirket", metrics["total_companies"], "Portfoydeki aktif firma sayisi", "blue"),
             ("Toplam Kisi", metrics["total_contacts"], "Tum karar verici ve ilgili kisiler", "slate"),
@@ -276,6 +304,21 @@ class DashboardPage(QWidget):
         self._populate_commercial_table(metrics, commercial_metrics)
         self._populate_pipeline_table(get_pipeline_summary())
         self._populate_samples_table(get_sample_status_summary())
+
+    def _populate_pipeline_counts(self, counts: dict[str, int]) -> None:
+        def set_label(key: str, title: str) -> None:
+            label = self.pipeline_count_labels.get(key)
+            if not label:
+                return
+            label.setText(f"{title}: {counts.get(key, 0)}")
+
+        set_label("total", "Toplam Şirket")
+        set_label("lead", "Lead")
+        set_label("contacted", "Contacted")
+        set_label("meeting", "Meeting")
+        set_label("offer", "Offer")
+        set_label("won", "Won")
+        set_label("lost", "Lost")
 
     def _clear_layout(self, layout: QVBoxLayout) -> None:
         while layout.count():
