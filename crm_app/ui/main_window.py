@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QStackedWidget,
+    QStatusBar,
     QStyle,
     QVBoxLayout,
     QWidget,
@@ -58,13 +59,21 @@ class MainWindow(QMainWindow):
         "Alan Yonetimi",
     ]
 
-    def __init__(self) -> None:
+    def __init__(self, *, active_db_path: str = "") -> None:
         super().__init__()
         self.setWindowTitle("CRM - Satis Yonetimi")
         self.resize(1440, 860)
         icon_path = get_asset_path("app.ico")
         if icon_path.exists():
             self.setWindowIcon(QIcon(str(icon_path)))
+
+        status_bar = QStatusBar()
+        status_bar.setObjectName("MainStatusBar")
+        self.setStatusBar(status_bar)
+        if active_db_path:
+            active_db_label = QLabel(f"Aktif DB: {active_db_path}")
+            active_db_label.setObjectName("ActiveDbLabel")
+            status_bar.addPermanentWidget(active_db_label, 1)
 
         central = QWidget()
         central.setObjectName("MainShell")
@@ -171,7 +180,7 @@ class MainWindow(QMainWindow):
             log_exception(LOGGER, "page_refresh", exc, page=page_name, index=index)
             raise
 
-def run() -> int:
+def run(*, active_db_path: str = "") -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyleSheet(build_stylesheet())
     app.setFont(QFont("Segoe UI", 10))
@@ -180,7 +189,7 @@ def run() -> int:
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
-    window = MainWindow()
+    window = MainWindow(active_db_path=active_db_path)
     window.show()
 
     return app.exec()
