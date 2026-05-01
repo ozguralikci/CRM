@@ -20,10 +20,12 @@ def get_session() -> Session:
 
 def init_database() -> None:
     from crm_app.models import all_models  # noqa: F401
+    from crm_app.services.auth_service import ensure_default_admin
     from crm_app.services.sample_data import seed_sample_data
 
     Base.metadata.create_all(bind=engine)
     ensure_custom_field_schema()
+    ensure_default_admin()
     seed_sample_data()
 
 
