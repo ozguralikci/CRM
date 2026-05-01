@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -133,14 +134,21 @@ def update_research_target_scores(
     target_id: int,
     fit_score: int,
     confidence: float,
+    *,
+    breakdown_json: str | None,
+    rules_version: str | None,
+    updated_at: datetime,
 ) -> None:
-    """Yalnızca fit_score ve confidence alanlarını günceller; hata halinde rollback."""
+    """Kural tabanlı skor, güven, döküm ve sürüm alanlarını tek işlemde günceller."""
     try:
         target = session.get(ResearchTarget, target_id)
         if target is None:
             raise ValueError(f"Hedef bulunamadi (id={target_id}).")
         target.fit_score = max(0, min(100, int(fit_score)))
         target.confidence = max(0.0, min(100.0, float(confidence)))
+        target.rules_score_breakdown = breakdown_json
+        target.rules_score_version = (rules_version or "").strip() or None
+        target.rules_score_updated_at = updated_at
         session.commit()
     except Exception:
         session.rollback()

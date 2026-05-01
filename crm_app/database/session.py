@@ -55,6 +55,7 @@ def init_database() -> None:
     Base.metadata.create_all(bind=engine)
     ensure_users_schema()
     ensure_companies_sales_schema()
+    ensure_research_targets_rules_schema()
     ensure_custom_field_schema()
     ensure_default_admin()
     seed_sample_data()
@@ -112,6 +113,30 @@ def ensure_custom_field_schema() -> None:
         connection.execute(
             text("UPDATE field_definitions SET sort_order = id WHERE sort_order IS NULL OR sort_order = 0")
         )
+
+
+def ensure_research_targets_rules_schema() -> None:
+    """Additive kolonlar: kural tabanlı skor dökümü ve sürüm (FAZ 2D)."""
+    _require_configured()
+    with engine.begin() as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "research_targets" not in tables:
+            return
+
+        columns = {
+            row[1] for row in connection.execute(text("PRAGMA table_info(research_targets)")).fetchall()
+        }
+        if "rules_score_breakdown" not in columns:
+            connection.execute(text("ALTER TABLE research_targets ADD COLUMN rules_score_breakdown TEXT"))
+        if "rules_score_version" not in columns:
+            connection.execute(text("ALTER TABLE research_targets ADD COLUMN rules_score_version TEXT"))
+        if "rules_score_updated_at" not in columns:
+            connection.execute(text("ALTER TABLE research_targets ADD COLUMN rules_score_updated_at DATETIME"))
 
 
 def ensure_companies_sales_schema() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -203,6 +205,7 @@ class ResearchTargetsPage(QWidget):
         self._rows: list[ResearchTarget] = []
         self._scoring_config_loaded: bool = False
         self._scoring_config: dict[str, Any] | None = None
+        self._current_breakdown_for_dialog: dict[str, Any] | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -325,6 +328,11 @@ class ResearchTargetsPage(QWidget):
         self.save_score_btn.setEnabled(False)
         self.save_score_btn.clicked.connect(self._save_preview_score)
         btn_row.addWidget(self.save_score_btn)
+        self.detail_breakdown_btn = QPushButton("Detayı gör")
+        set_button_role(self.detail_breakdown_btn, "secondary")
+        self.detail_breakdown_btn.setEnabled(False)
+        self.detail_breakdown_btn.clicked.connect(self._show_breakdown_detail_dialog)
+        btn_row.addWidget(self.detail_breakdown_btn)
         btn_row.addStretch(1)
         edit_btn = QPushButton("Duzenle")
         set_button_role(edit_btn, "secondary")
@@ -386,6 +394,8 @@ class ResearchTargetsPage(QWidget):
             )
             self.detail_body.clear()
             self.save_score_btn.setEnabled(False)
+            self.detail_breakdown_btn.setEnabled(False)
+            self._current_breakdown_for_dialog = None
             return
 
         self.table.clearSpans()
@@ -426,11 +436,29 @@ class ResearchTargetsPage(QWidget):
                 self.table.selectRow(idx)
                 self._populate_detail(idx)
         self._sync_save_score_button()
+        self._sync_detail_breakdown_button()
 
     def _sync_save_score_button(self) -> None:
         row = self._current_row_index()
         ok = row is not None and 0 <= row < len(self._rows)
         self.save_score_btn.setEnabled(ok)
+
+    def _sync_detail_breakdown_button(self) -> None:
+        row = self._current_row_index()
+        self._current_breakdown_for_dialog = None
+        if row is None or row < 0 or row >= len(self._rows):
+            self.detail_breakdown_btn.setEnabled(False)
+            return
+        t = self._rows[row]
+        raw = (getattr(t, "rules_score_breakdown", None) or "").strip()
+        if not raw:
+            self.detail_breakdown_btn.setEnabled(False)
+            return
+        try:
+            self._current_breakdown_for_dialog = json.loads(raw)
+            self.detail_breakdown_btn.setEnabled(True)
+        except json.JSONDecodeError:
+            self.detail_breakdown_btn.setEnabled(False)
 
     def _save_preview_score(self) -> None:
         row = self._current_row_index()
@@ -482,9 +510,29 @@ class ResearchTargetsPage(QWidget):
             QMessageBox.critical(self, "Skor", f"Skor tekrar hesaplanamadi:\n{exc}")
             return
 
+        bd_inner = preview2.get("breakdown")
+        if not isinstance(bd_inner, dict):
+            bd_inner = {}
+        try:
+            breakdown_json = json.dumps(bd_inner, ensure_ascii=False)
+        except (TypeError, ValueError) as exc:
+            QMessageBox.critical(self, "Skor", f"Analiz verisi hazirlanamadi:\n{exc}")
+            return
+
+        rules_version = str(bd_inner.get("ruleset_version") or "")
+        saved_at = datetime.utcnow()
+
         session = get_session()
         try:
-            update_research_target_scores(session, target_id, new_score, new_conf)
+            update_research_target_scores(
+                session,
+                target_id,
+                new_score,
+                new_conf,
+                breakdown_json=breakdown_json,
+                rules_version=rules_version or None,
+                updated_at=saved_at,
+            )
         except Exception as exc:
             QMessageBox.critical(self, "Skor", f"Kaydedilemedi:\n{exc}")
             return
@@ -712,40 +760,203 @@ class ResearchTargetsPage(QWidget):
         for _, msg in ranked[:limit]:
             lines.append(f"• {msg}")
         if not lines:
-            lines.append("• Özet neden üretilemedi (kurallar eşleşmedi veya veri çok seyrek).")
+            lines.append("• Analiz özeti için sektör ve ürün uyumu alanlarını netleştirin.")
         return lines
 
+    def _skor_analizi_unavailable_lines(self) -> list[str]:
+        return [
+            "⚠️ Analiz yapılamıyor",
+            "",
+            "Eksik bilgiler:",
+            "- sektör",
+            "- ürün uyumu sinyalleri",
+            "",
+            "Bu alanları doldurarak tekrar deneyin.",
+        ]
+
     def _build_rules_based_preview_block(self, t: ResearchTarget) -> list[str]:
+        hdr = ["Durum: Canlı önizleme", ""]
         cfg = self._get_scoring_config()
-        if cfg is None:
-            return [
-                "Konfigürasyon dosyası yüklenemedi veya PyYAML eksik; kural tabanlı önizleme kullanılamıyor.",
-                "(Uygulama çalışmaya devam eder.)",
-            ]
-        if compute_fit_score is None:
-            return ["Skor önizlemesi hesaplanamadı."]
+        if cfg is None or compute_fit_score is None:
+            return hdr + self._skor_analizi_unavailable_lines()
         try:
             result = compute_fit_score(t, cfg)
         except Exception:
-            return ["Skor önizlemesi hesaplanamadı."]
+            return hdr + self._skor_analizi_unavailable_lines()
 
-        score_v = result.get("score")
+        score_v = int(result.get("score", 0))
         conf_v = result.get("confidence")
         cat_v = result.get("category")
         rec_v = result.get("recommendation")
-        rv = result.get("breakdown")
-        ruleset = rv.get("ruleset_version") if isinstance(rv, dict) else "?"
 
-        block = [
-            f"Önizleme skoru: {score_v} / 100   |   Güven: {conf_v}%",
+        if score_v == 0:
+            block = hdr + [
+                "🔴 Skor: 0 (Veri eksik)",
+                "",
+                "Bu firmayı analiz etmek için:",
+                "1. Sektör gir",
+                "2. Ürün uyumu sinyali ekle",
+                "",
+                f"Güven: {conf_v}%",
+                f"Kategori: {cat_v}",
+                f"Öneri: {rec_v}",
+                "",
+                "Bu önizleme veritabanına otomatik yazılmaz; kayıtlı skoru güncellemek için «Skoru Kaydet» kullanın.",
+                "",
+                "Öne çıkan nedenler:",
+                *self._top_reason_lines_tr(result, limit=5),
+            ]
+            return block
+
+        block = hdr + [
+            f"Skor: {score_v} / 100   |   Güven: {conf_v}%",
             f"Kategori: {cat_v}",
             f"Öneri: {rec_v}",
-            f"(Kural seti: {ruleset} — veritabanına yazılmaz; tablodaki Skor kayıtlı değerdir.)",
+            "",
+            "Bu önizleme veritabanına otomatik yazılmaz; kayıtlı skoru güncellemek için «Skoru Kaydet» kullanın.",
             "",
             "Öne çıkan nedenler:",
             *self._top_reason_lines_tr(result, limit=5),
         ]
         return block
+
+    def _build_skor_analizi_section(self, t: ResearchTarget) -> list[str]:
+        raw_bd = (getattr(t, "rules_score_breakdown", None) or "").strip()
+        if not raw_bd:
+            return self._build_rules_based_preview_block(t)
+        try:
+            bd = json.loads(raw_bd)
+        except json.JSONDecodeError:
+            return [
+                "Durum: Kayıtlı analiz okunamadı",
+                "Kayıtlı veri geçersiz; aşağıda canlı önizleme gösterilir.",
+                "",
+                *self._build_rules_based_preview_block(t),
+            ]
+        if not isinstance(bd, dict):
+            return [
+                "Durum: Kayıtlı analiz okunamadı",
+                "",
+                *self._build_rules_based_preview_block(t),
+            ]
+        fake_result: dict[str, Any] = {"breakdown": bd}
+        ver = (getattr(t, "rules_score_version", None) or "").strip() or str(bd.get("ruleset_version") or "-")
+        ts = getattr(t, "rules_score_updated_at", None)
+        ts_fmt = ts.strftime("%d.%m.%Y %H:%M") if ts else "-"
+        return [
+            "Durum: Kayıtlı analiz (veritabanı)",
+            f"Sürüm: {ver}",
+            f"Analiz zamanı: {ts_fmt}",
+            f"Skor: {int(t.fit_score or 0)} / 100   |   Güven: {float(t.confidence or 0):.1f}",
+            "",
+            "Öne çıkan nedenler:",
+            *self._top_reason_lines_tr(fake_result, limit=5),
+            "",
+            "Tam açıklama için «Detayı gör» düğmesini kullanın.",
+            "",
+            "Veriyi güncellemek için «Skoru Kaydet» ile yeniden kaydedebilirsiniz.",
+        ]
+
+    def _format_breakdown_detail_text(self, bd: dict[str, Any]) -> str:
+        lines: list[str] = []
+        rv = bd.get("ruleset_version")
+        if rv:
+            lines.append(f"Sürüm: {rv}")
+        wr = bd.get("weights_reference")
+        if isinstance(wr, dict) and wr:
+            lines.append("")
+            lines.append("Puan üst sınırları")
+            lines.append(f"  • Sektör: {wr.get('sector_max', '-')}")
+            lines.append(f"  • Ürün sinyalleri: {wr.get('product_max', '-')}")
+            lines.append(f"  • Operasyonel: {wr.get('operational_max', '-')}")
+            lines.append(f"  • Kanıt / tamlık: {wr.get('evidence_max', '-')}")
+
+        comps = bd.get("components")
+        if isinstance(comps, dict):
+            sec = comps.get("sector")
+            if isinstance(sec, dict):
+                lines.append("")
+                lines.append("Sektör")
+                lines.append(f"  • Ham metin: {sec.get('raw_sector') or '(boş)'}")
+                lines.append(f"  • Eşleşme: {sec.get('matched_tier') or '-'} — {sec.get('matched_pattern') or '-'}")
+                lines.append(f"  • Puan: {sec.get('points', 0)} / {sec.get('max', '-')}")
+                if sec.get("exclude_hit"):
+                    lines.append("  • Not: Dışlama kuralı tetiklendi.")
+
+            prod = comps.get("product_signals")
+            if isinstance(prod, dict):
+                lines.append("")
+                lines.append("Ürün uyumu sinyalleri")
+                lines.append(f"  • Toplam (tavan öncesi): {prod.get('points_before_cap', prod.get('points', '-'))}")
+                lines.append(f"  • Hesaplanan puan: {prod.get('points', '-')}")
+                for g in prod.get("groups") or []:
+                    if isinstance(g, dict):
+                        gh = ", ".join(str(x) for x in (g.get("keywords_hit") or [])[:6])
+                        lines.append(f"  • Grup {g.get('id')}: +{g.get('points', 0)} {('— ' + gh) if gh else ''}")
+                nh = prod.get("negative_hits") or []
+                if nh:
+                    lines.append(f"  • Uyarıcı kelimeler: {', '.join(str(x) for x in nh)}")
+
+            op = comps.get("operational")
+            if isinstance(op, dict):
+                lines.append("")
+                lines.append("Operasyonel uygunluk")
+                lines.append(f"  • Puan: {op.get('points', 0)} / {op.get('max', '-')}")
+                for m in op.get("matched") or []:
+                    if isinstance(m, dict):
+                        lines.append(
+                            f"  • {m.get('type')}: {m.get('pattern')} (+{m.get('points', 0)})"
+                        )
+
+            ev = comps.get("evidence")
+            if isinstance(ev, dict):
+                lines.append("")
+                lines.append("Veri kanıtları")
+                lines.append(f"  • Toplam: {ev.get('points', 0)} / {ev.get('max', '-')}")
+                for it in ev.get("items") or []:
+                    if isinstance(it, dict):
+                        lines.append(f"  • {it.get('field')}: +{it.get('points', 0)}")
+
+        pens = bd.get("penalties")
+        if isinstance(pens, dict):
+            lines.append("")
+            lines.append("Cezalar ve eksik veri")
+            for ln in pens.get("lines") or []:
+                if isinstance(ln, dict):
+                    lines.append(f"  • {ln.get('code')}: −{ln.get('points', 0)}")
+            lines.append(
+                f"  • Ceza toplamı (üst sınırlı): {pens.get('capped_total', pens.get('raw_total', '-'))}"
+            )
+
+        sums = bd.get("sums")
+        if isinstance(sums, dict):
+            lines.append("")
+            lines.append("Özet")
+            lines.append(f"  • Bileşen toplamı: {sums.get('raw_components', '-')}")
+            lines.append(f"  • Ceza sonrası (tavan öncesi): {sums.get('after_penalties_uncapped_clamped', '-')}")
+            for cap in sums.get("caps_applied") or []:
+                if isinstance(cap, dict):
+                    lines.append(f"  • Uygulanan tavan: {cap.get('reason')} → {cap.get('cap')}")
+
+        return "\n".join(lines) if lines else "Ayrıntı bulunamadı."
+
+    def _show_breakdown_detail_dialog(self) -> None:
+        bd = self._current_breakdown_for_dialog
+        if not bd:
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Analiz detayı")
+        dlg.setMinimumWidth(440)
+        dlg.setMinimumHeight(400)
+        vl = QVBoxLayout(dlg)
+        body = QTextEdit()
+        body.setReadOnly(True)
+        body.setPlainText(self._format_breakdown_detail_text(bd))
+        vl.addWidget(body)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        bb.accepted.connect(dlg.accept)
+        vl.addWidget(bb)
+        dlg.exec()
 
     def add_target(self) -> None:
         dialog = ResearchTargetDialog(parent=self)
@@ -765,6 +976,7 @@ class ResearchTargetsPage(QWidget):
         if row is None or row < 0 or row >= len(self._rows):
             self.detail_body.clear()
             self._sync_save_score_button()
+            self._sync_detail_breakdown_button()
             return
         self._populate_detail(row)
         self._sync_save_score_button()
@@ -772,39 +984,42 @@ class ResearchTargetsPage(QWidget):
     def _populate_detail(self, row: int) -> None:
         if row < 0 or row >= len(self._rows):
             self.detail_body.clear()
+            self.detail_breakdown_btn.setEnabled(False)
+            self._current_breakdown_for_dialog = None
             return
         t = self._rows[row]
         comment, suggestion = self._build_fit_comment(t)
         sk = (t.status or "new").strip().lower()
         status_tr = self._status_label_tr(sk)
         lines = [
-            "=== Genel ===",
+            "GENEL BİLGİ",
             f"Firma: {t.name}",
             f"Web: {t.website or '-'}",
             f"LinkedIn: {t.linkedin_company_url or '-'}",
             f"Konum: {t.city or '-'}, {t.country or '-'}",
-            f"Sektor: {t.sector or '-'}",
+            f"Sektör: {t.sector or '-'}",
             f"Firma tipi: {t.company_type or '-'}",
-            f"Uretim yapisi: {t.production_structure or '-'}",
-            f"Uygunluk skoru: {t.fit_score}  |  Guven: {t.confidence:.1f}",
+            f"Üretim yapısı: {t.production_structure or '-'}",
+            f"Kayıtlı skor: {t.fit_score}  |  Güven: {t.confidence:.1f}",
             f"Durum: {status_tr}",
             "",
-            "=== Uygunluk degerlendirmesi ===",
+            "UYGUNLUK DEĞERLENDİRMESİ",
             comment,
             "",
-            "=== Sonraki adim ===",
+            "SONRAKİ ADIM",
             suggestion,
             "",
-            "=== Kural Tabanlı Skor Önizlemesi ===",
-            *self._build_rules_based_preview_block(t),
+            "SKOR ANALİZİ",
+            *self._build_skor_analizi_section(t),
             "",
-            "=== Urun uyumu sinyalleri ===",
+            "ÜRÜN UYUMU SİNYALLERİ",
             t.product_fit_signals or "-",
             "",
-            "=== Notlar ===",
+            "NOTLAR",
             t.notes or "-",
         ]
         self.detail_body.setPlainText("\n".join(lines))
+        self._sync_detail_breakdown_button()
 
     def _edit_selected(self, _item: QTableWidgetItem | None = None) -> None:
         row = self._current_row_index()
