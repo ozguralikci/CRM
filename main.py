@@ -7,7 +7,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from crm_app.database.session import init_database
+import crm_app.database.session as db_session
+from crm_app.database.session import configure_database, init_database
 from crm_app.services.backup_service import run_startup_checks_and_backup
 from crm_app.ui.main_window import run
 from crm_app.utils.app_paths import get_database_path, get_error_log_file_path, get_user_data_dir
@@ -105,6 +106,8 @@ def main() -> None:
             raise FileNotFoundError(f"Active database not found: {active_db}")
 
         _warn_if_db_path_changed(active_db)
+        configure_database(active_db)
+        LOGGER.info("ORM DATABASE: %s", db_session.DATABASE_PATH)
         run_startup_checks_and_backup(
             db_path=active_db,
             backups_dir=Path("D:/CRM/backups"),

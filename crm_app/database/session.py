@@ -1,24 +1,53 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from crm_app.database.base import Base
-from crm_app.utils.app_paths import get_database_path
+
+_CONFIGURED = False
+DATABASE_PATH: Path | None = None
+DATABASE_URL: str | None = None
+engine: Engine | None = None
+SessionLocal: sessionmaker[Session] | None = None
 
 
-DATABASE_PATH = get_database_path()
-DATABASE_URL = f"sqlite:///{DATABASE_PATH}"
+def configure_database(database_path: Path) -> None:
+    """
+    Configure SQLAlchemy engine/session factory for the active SQLite database file.
 
-engine = create_engine(DATABASE_URL, future=True)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    Must be called once at application startup before any ORM operations.
+    """
+    global _CONFIGURED, DATABASE_PATH, DATABASE_URL, engine, SessionLocal
+
+    if _CONFIGURED:
+        raise RuntimeError("Database already configured. configure_database() must be called only once.")
+
+    resolved = database_path.expanduser().resolve()
+    DATABASE_PATH = resolved
+    DATABASE_URL = f"sqlite:///{resolved.as_posix()}"
+    engine = create_engine(DATABASE_URL, future=True)
+    SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    _CONFIGURED = True
+
+
+def _require_configured() -> None:
+    if not _CONFIGURED or SessionLocal is None or engine is None:
+        raise RuntimeError(
+            "Database not configured. Call configure_database(Path(...)) before using the ORM."
+        )
 
 
 def get_session() -> Session:
+    _require_configured()
     return SessionLocal()
 
 
 def init_database() -> None:
+    _require_configured()
     from crm_app.models import all_models  # noqa: F401
     from crm_app.services.auth_service import ensure_default_admin
     from crm_app.services.sample_data import seed_sample_data
@@ -32,6 +61,7 @@ def init_database() -> None:
 
 
 def ensure_users_schema() -> None:
+    _require_configured()
     with engine.begin() as connection:
         tables = {
             row[0]
@@ -50,6 +80,7 @@ def ensure_users_schema() -> None:
 
 
 def ensure_custom_field_schema() -> None:
+    _require_configured()
     with engine.begin() as connection:
         tables = {
             row[0]
@@ -84,6 +115,7 @@ def ensure_custom_field_schema() -> None:
 
 
 def ensure_companies_sales_schema() -> None:
+    _require_configured()
     with engine.begin() as connection:
         tables = {
             row[0]
