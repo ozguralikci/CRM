@@ -1,0 +1,135 @@
+# Sürlas kural tabanlı skorlama — FAZ 2A (kurallar YAML ile değiştirilebilir)
+ruleset_version: "surlas_scoring_v1.0"
+
+weights:
+  sector_max: 25
+  product_max: 35
+  operational_max: 20
+  evidence_max: 20
+
+# Sektör metni (normalize edilmiş) ile alt-string eşlemesi; ilk en yüksek kategori kazanır
+sector:
+  primary:
+    - patterns: ["otomotiv", "automotive", "yan sanayi", "oem"]
+      points: 25
+    - patterns: ["agir vasita", "commercial vehicle", "kamyon", "tir"]
+      points: 22
+  secondary:
+    - patterns: ["makina", "makine", "machine", "imalat", "manufacturing"]
+      points: 15
+    - patterns: ["hidrolik", "hydraulic", "pnomatik", "pneumatic"]
+      points: 18
+    - patterns: ["tarim", "agricultural", "tractor"]
+      points: 12
+  adjacent:
+    - patterns: ["metal", "isciligi", "machining", "kesim"]
+      points: 8
+  exclude:
+    - patterns: ["yazilim", "software", "saas", "egitim", "training"]
+      points_override: 0
+      cap_final_score: 25
+    - patterns: ["perakende", "retail", "restoran", "restaurant", "e-ticaret"]
+      points_override: 0
+      cap_final_score: 30
+
+product_signals:
+  min_chars_substantial: 36
+  thin_char_threshold: 12
+  thin_penalty_points: 8
+  positive_groups:
+    - id: sealing
+      keywords:
+        - "conta"
+        - "oring"
+        - "o-ring"
+        - "sizdirmazlik"
+        - "sızdırmazlık"
+        - "kece"
+        - "keçe"
+        - "kaucuk"
+        - "kauçuk"
+      max_points: 14
+    - id: hose_fluid
+      keywords:
+        - "hortum"
+        - "hose"
+        - "hidrolik hortum"
+        - "akiskan"
+        - "akışkan"
+        - "fitting"
+      max_points: 12
+    - id: industrial_oem
+      keywords:
+        - "oem"
+        - "yan sanayi"
+        - "tier"
+        - "aftermarket"
+        - "yedek parca"
+        - "yedek parça"
+        - "technical part"
+      max_points: 9
+  negative_keywords:
+    - kw: "yazilim"
+      subtract: 18
+    - kw: "saas"
+      subtract: 18
+    - kw: "perakende"
+      subtract: 12
+    - kw: "eticaret"
+      subtract: 10
+
+operational:
+  company_type_bonus:
+    - patterns: ["uretici", "üretici", "manufacturer", "oem"]
+      points: 10
+    - patterns: ["tedarikci", "tedarikçi", "supplier"]
+      points: 7
+    - patterns: ["distributor", "distribütör", "wholesale"]
+      points: 5
+  production_bonus:
+    - patterns: ["montaj", "assembly", "hat", "line"]
+      points: 6
+    - patterns: ["dokum", "döküm", "pres", "islem", "işlem"]
+      points: 8
+  country_tier1_keywords:
+    - "turkiye"
+    - "türkiye"
+    - "turkey"
+    - "deutschland"
+    - "germany"
+    - "almanya"
+    - "poland"
+    - "polonya"
+    - "romania"
+    - "romanya"
+  country_tier1_points: 7
+  default_country_points: 3
+
+evidence:
+  website_points: 7
+  linkedin_points: 4
+  sector_field_points: 5
+  signals_substantial_points: 8
+  notes_min_chars: 24
+  notes_bonus_points: 4
+
+penalties:
+  missing_website: 11
+  missing_sector: 14
+  missing_signals_or_thin: 9
+  bundle_extra_when_two_of_three_critical_missing: 12
+  critical_fields: ["website", "sector", "product_signals"]
+  max_total_penalty: 38
+  score_cap_when_critical_bundle: 42
+
+categories:
+  weak_max: 39
+  medium_max: 54
+  good_max: 74
+  # üstü: Sıcak
+
+recommendations:
+  weak: "Veri toplama ve sektör/ürün uyumu kanıtlarını güçlendirin; şimdilik düşük öncelik."
+  medium: "Eksik alanları tamamlayın; ürün uyumu sinyallerini netleştirdikten sonra tekrar değerlendirin."
+  good: "Karar verici ve teknik uygunluk için ek kaynak notu ekleyerek önceliği kesinleştirin."
+  hot: "İletişim ve teklif hazırlığı için uygun görünüyor; son doğrulamayı notlarla yapın."
