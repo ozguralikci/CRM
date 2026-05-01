@@ -326,6 +326,7 @@ class ResearchTargetsPage(QWidget):
         self.save_score_btn = QPushButton("Skoru Kaydet")
         set_button_role(self.save_score_btn, "secondary")
         self.save_score_btn.setEnabled(False)
+        self.save_score_btn.setToolTip("Analiz için sektör ve ürün sinyali girin")
         self.save_score_btn.clicked.connect(self._save_preview_score)
         btn_row.addWidget(self.save_score_btn)
         self.detail_breakdown_btn = QPushButton("Detayı gör")
@@ -441,7 +442,22 @@ class ResearchTargetsPage(QWidget):
     def _sync_save_score_button(self) -> None:
         row = self._current_row_index()
         ok = row is not None and 0 <= row < len(self._rows)
+        if ok:
+            ok = self._has_minimum_fields_for_score_save(self._rows[row])
         self.save_score_btn.setEnabled(ok)
+
+    def _panel_score_band_label(self, score: int) -> str:
+        s = max(0, min(100, int(score)))
+        if s <= 40:
+            return "Zayıf"
+        if s <= 70:
+            return "Orta"
+        if s < 85:
+            return "İyi"
+        return "Sıcak"
+
+    def _has_minimum_fields_for_score_save(self, t: ResearchTarget) -> bool:
+        return bool((t.sector or "").strip()) and len((t.product_fit_signals or "").strip()) >= 12
 
     def _sync_detail_breakdown_button(self) -> None:
         row = self._current_row_index()
@@ -775,7 +791,7 @@ class ResearchTargetsPage(QWidget):
         ]
 
     def _build_rules_based_preview_block(self, t: ResearchTarget) -> list[str]:
-        hdr = ["Durum: Canlı önizleme", ""]
+        hdr = ["Durum: Analiz yapılmadı", ""]
         cfg = self._get_scoring_config()
         if cfg is None or compute_fit_score is None:
             return hdr + self._skor_analizi_unavailable_lines()
@@ -786,22 +802,16 @@ class ResearchTargetsPage(QWidget):
 
         score_v = int(result.get("score", 0))
         conf_v = result.get("confidence")
-        cat_v = result.get("category")
         rec_v = result.get("recommendation")
+        band = self._panel_score_band_label(score_v)
 
         if score_v == 0:
             block = hdr + [
-                "🔴 Skor: 0 (Veri eksik)",
-                "",
-                "Bu firmayı analiz etmek için:",
-                "1. Sektör gir",
-                "2. Ürün uyumu sinyali ekle",
-                "",
+                f"🔴 Skor: {score_v} → {band}",
                 f"Güven: {conf_v}%",
-                f"Kategori: {cat_v}",
-                f"Öneri: {rec_v}",
+                f"Özet: {rec_v}",
                 "",
-                "Bu önizleme veritabanına otomatik yazılmaz; kayıtlı skoru güncellemek için «Skoru Kaydet» kullanın.",
+                "Kalıcı kayıt için «Skoru Kaydet» (önce sektör ve ürün sinyali tamamlayın).",
                 "",
                 "Öne çıkan nedenler:",
                 *self._top_reason_lines_tr(result, limit=5),
@@ -809,11 +819,10 @@ class ResearchTargetsPage(QWidget):
             return block
 
         block = hdr + [
-            f"Skor: {score_v} / 100   |   Güven: {conf_v}%",
-            f"Kategori: {cat_v}",
+            f"Skor: {score_v} → {band}   |   Güven: {conf_v}%",
             f"Öneri: {rec_v}",
             "",
-            "Bu önizleme veritabanına otomatik yazılmaz; kayıtlı skoru güncellemek için «Skoru Kaydet» kullanın.",
+            "Kalıcı kayıt için «Skoru Kaydet».",
             "",
             "Öne çıkan nedenler:",
             *self._top_reason_lines_tr(result, limit=5),
@@ -829,7 +838,7 @@ class ResearchTargetsPage(QWidget):
         except json.JSONDecodeError:
             return [
                 "Durum: Kayıtlı analiz okunamadı",
-                "Kayıtlı veri geçersiz; aşağıda canlı önizleme gösterilir.",
+                "Kayıtlı veri okunamıyor; aşağıda güncel hesaplama gösterilir.",
                 "",
                 *self._build_rules_based_preview_block(t),
             ]
@@ -843,18 +852,17 @@ class ResearchTargetsPage(QWidget):
         ver = (getattr(t, "rules_score_version", None) or "").strip() or str(bd.get("ruleset_version") or "-")
         ts = getattr(t, "rules_score_updated_at", None)
         ts_fmt = ts.strftime("%d.%m.%Y %H:%M") if ts else "-"
+        sv = int(t.fit_score or 0)
+        band = self._panel_score_band_label(sv)
         return [
-            "Durum: Kayıtlı analiz (veritabanı)",
-            f"Sürüm: {ver}",
-            f"Analiz zamanı: {ts_fmt}",
-            f"Skor: {int(t.fit_score or 0)} / 100   |   Güven: {float(t.confidence or 0):.1f}",
+            "Durum: Kayıtlı analiz",
+            f"Sürüm: {ver}  ·  Zaman: {ts_fmt}",
+            f"Skor: {sv} → {band}   |   Güven: {float(t.confidence or 0):.1f}",
             "",
             "Öne çıkan nedenler:",
             *self._top_reason_lines_tr(fake_result, limit=5),
             "",
-            "Tam açıklama için «Detayı gör» düğmesini kullanın.",
-            "",
-            "Veriyi güncellemek için «Skoru Kaydet» ile yeniden kaydedebilirsiniz.",
+            "Tüm kalemler: «Detayı gör». Güncellemek için «Skoru Kaydet».",
         ]
 
     def _format_breakdown_detail_text(self, bd: dict[str, Any]) -> str:
@@ -991,6 +999,7 @@ class ResearchTargetsPage(QWidget):
         comment, suggestion = self._build_fit_comment(t)
         sk = (t.status or "new").strip().lower()
         status_tr = self._status_label_tr(sk)
+        ks = int(t.fit_score or 0)
         lines = [
             "GENEL BİLGİ",
             f"Firma: {t.name}",
@@ -1000,20 +1009,31 @@ class ResearchTargetsPage(QWidget):
             f"Sektör: {t.sector or '-'}",
             f"Firma tipi: {t.company_type or '-'}",
             f"Üretim yapısı: {t.production_structure or '-'}",
-            f"Kayıtlı skor: {t.fit_score}  |  Güven: {t.confidence:.1f}",
+            f"Kayıtlı skor: {ks} → {self._panel_score_band_label(ks)}  |  Güven: {t.confidence:.1f}",
             f"Durum: {status_tr}",
+            "",
             "",
             "UYGUNLUK DEĞERLENDİRMESİ",
             comment,
             "",
+            "",
             "SONRAKİ ADIM",
             suggestion,
+            "",
+            "",
+            "Bu firmayı analiz etmek için:",
+            "1. Sektör gir",
+            "2. Ürün uyumu sinyali ekle",
+            "3. Skoru Kaydet",
+            "",
             "",
             "SKOR ANALİZİ",
             *self._build_skor_analizi_section(t),
             "",
+            "",
             "ÜRÜN UYUMU SİNYALLERİ",
             t.product_fit_signals or "-",
+            "",
             "",
             "NOTLAR",
             t.notes or "-",
