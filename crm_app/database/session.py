@@ -25,6 +25,7 @@ def init_database() -> None:
 
     Base.metadata.create_all(bind=engine)
     ensure_users_schema()
+    ensure_companies_sales_schema()
     ensure_custom_field_schema()
     ensure_default_admin()
     seed_sample_data()
@@ -80,3 +81,23 @@ def ensure_custom_field_schema() -> None:
         connection.execute(
             text("UPDATE field_definitions SET sort_order = id WHERE sort_order IS NULL OR sort_order = 0")
         )
+
+
+def ensure_companies_sales_schema() -> None:
+    with engine.begin() as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "companies" not in tables:
+            return
+
+        columns = {row[1] for row in connection.execute(text("PRAGMA table_info(companies)")).fetchall()}
+        if "score" not in columns:
+            connection.execute(text("ALTER TABLE companies ADD COLUMN score INTEGER DEFAULT 0"))
+        if "status" not in columns:
+            connection.execute(text("ALTER TABLE companies ADD COLUMN status TEXT DEFAULT 'lead'"))
+        if "next_action" not in columns:
+            connection.execute(text("ALTER TABLE companies ADD COLUMN next_action TEXT DEFAULT ''"))

@@ -18,6 +18,9 @@ class Company(Base):
     website: Mapped[str] = mapped_column(String(255), default="")
     linkedin: Mapped[str] = mapped_column(String(255), default="")
     priority: Mapped[int] = mapped_column(Integer, default=3)
+    score: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="lead")
+    next_action: Mapped[str] = mapped_column(String(255), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     contacts = relationship("Contact", back_populates="company", cascade="all, delete-orphan")

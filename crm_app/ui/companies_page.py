@@ -151,6 +151,20 @@ class CompanyDialog(QDialog):
         self.priority_input.setRange(1, 5)
         self.priority_input.setValue(company.priority if company else 3)
 
+        self.score_input = QSpinBox()
+        self.score_input.setRange(0, 100)
+        self.score_input.setValue(getattr(company, "score", 0) if company else 0)
+
+        self.status_input = QComboBox()
+        for value in ["lead", "contacted", "meeting", "offer", "won", "lost"]:
+            self.status_input.addItem(value, value)
+        current_status = getattr(company, "status", "lead") if company else "lead"
+        status_index = self.status_input.findData(current_status)
+        if status_index >= 0:
+            self.status_input.setCurrentIndex(status_index)
+
+        self.next_action_input = QLineEdit(getattr(company, "next_action", "") if company else "")
+
         ensure_company_business_fields()
         business_keys = {config["field_key"] for config in COMPANY_BUSINESS_FIELDS if config["field_key"] not in {item["field_key"] for item in COMPANY_AI_FIELDS}}
         self.business_dynamic_fields = DynamicFieldsSection(
@@ -178,6 +192,9 @@ class CompanyDialog(QDialog):
         temel_form.addRow("Ülke", self.country_input)
         temel_form.addRow("Şehir", self.city_input)
         temel_form.addRow("Öncelik", self.priority_input)
+        temel_form.addRow("Score", self.score_input)
+        temel_form.addRow("Status", self.status_input)
+        temel_form.addRow("Next Action", self.next_action_input)
         scroll_layout.addWidget(
             self._create_form_section(
                 "Temel Bilgiler",
@@ -268,6 +285,9 @@ class CompanyDialog(QDialog):
             "website": self.website_input.text().strip(),
             "linkedin": self.linkedin_input.text().strip(),
             "priority": self.priority_input.value(),
+            "score": self.score_input.value(),
+            "status": str(self.status_input.currentData() or "lead"),
+            "next_action": self.next_action_input.text().strip(),
             "custom_values": custom_values,
         }
 
@@ -2009,12 +2029,15 @@ class CompanyDetailDialog(QDialog):
 class CompaniesPage(QWidget):
     table_columns = [
         ("name", "Şirket"),
+        ("score", "Score"),
+        ("status", "Status"),
+        ("next_action", "Next Action"),
         ("sektor", "Sektör"),
         ("kaynak", "Kaynak"),
         ("potansiyel_urun", "Potansiyel Ürün"),
-        ("durum", "Durum"),
-        ("next_action", "Sonraki Aksiyon"),
-        ("next_action_date", "Takip Tarihi"),
+        ("custom_durum", "Özel Durum"),
+        ("follow_up_action", "Takip Aksiyonu"),
+        ("follow_up_date", "Takip Tarihi"),
         ("priority", "Öncelik"),
     ]
     export_headers = [
@@ -2060,6 +2083,19 @@ class CompaniesPage(QWidget):
         for priority in range(1, 6):
             self.priority_filter.addItem(f"★ {priority}", priority)
         self.priority_filter.currentIndexChanged.connect(self.refresh_table)
+
+        self.status_filter = QComboBox()
+        self.status_filter.setMinimumWidth(140)
+        self.status_filter.addItem("Status: Tümü", None)
+        for value in ["lead", "contacted", "meeting", "offer", "won", "lost"]:
+            self.status_filter.addItem(value, value)
+        self.status_filter.currentIndexChanged.connect(self.refresh_table)
+
+        self.sort_filter = QComboBox()
+        self.sort_filter.setMinimumWidth(140)
+        self.sort_filter.addItem("Sıralama: Yeni", "created_at")
+        self.sort_filter.addItem("Sıralama: Skor", "score")
+        self.sort_filter.currentIndexChanged.connect(self.refresh_table)
 
         self.bulk_count_label, self.bulk_button = create_bulk_action_controls()
         self.bulk_menu = QMenu(self.bulk_button)
@@ -2113,7 +2149,7 @@ class CompaniesPage(QWidget):
                 export_button,
             ],
             search_widget=self.search_input,
-            filter_widgets=[self.priority_filter],
+            filter_widgets=[self.priority_filter, self.status_filter, self.sort_filter],
         )
 
         self.table = QTableWidget()
@@ -2133,6 +2169,8 @@ class CompaniesPage(QWidget):
             filter_widgets={
                 "search": self.search_input,
                 "priority": self.priority_filter,
+                "status": self.status_filter,
+                "sort": self.sort_filter,
             },
             default_visible_columns=list(range(len(self.table_columns))),
             reset_callback=self.refresh_table,
@@ -2160,7 +2198,14 @@ class CompaniesPage(QWidget):
 
     def refresh_table(self) -> None:
         priority = self.priority_filter.currentData()
-        self.companies = list_companies(self.search_input.text().strip(), priority)
+        status = self.status_filter.currentData()
+        order_by_score = self.sort_filter.currentData() == "score"
+        self.companies = list_companies(
+            self.search_input.text().strip(),
+            priority,
+            status=status,
+            order_by_score=order_by_score,
+        )
         ensure_company_business_fields()
         self.company_field_values_map = get_field_values_map(
             "company",
@@ -2196,14 +2241,14 @@ class CompaniesPage(QWidget):
                     )
                     item.setFont(name_font)
                     item.setForeground(QColor("#12243a"))
-                elif key in {"next_action", "potansiyel_urun"}:
+                elif key in {"next_action", "potansiyel_urun", "follow_up_action"}:
                     item.setTextAlignment(
                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
                     )
                     item.setForeground(QColor("#44566d"))
                 else:
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                    if key in {"kaynak", "durum", "next_action_date"}:
+                    if key in {"kaynak", "custom_durum", "follow_up_date", "status"}:
                         item.setForeground(QColor("#61748c"))
                 if column == 0:
                     set_row_identifier(item, company.id)
@@ -2215,15 +2260,18 @@ class CompaniesPage(QWidget):
 
     def _get_company_table_values(self, company: Company) -> list[str]:
         field_values = self.company_field_values_map.get(company.id, {})
-        next_action, next_action_date = self._get_company_follow_up(company)
+        follow_up_action, follow_up_date = self._get_company_follow_up(company)
         row_map = {
             "name": company.name,
+            "score": str(getattr(company, "score", 0)),
+            "status": getattr(company, "status", "lead") or "lead",
+            "next_action": getattr(company, "next_action", "") or "-",
             "sektor": field_values.get("sektor") or "-",
             "kaynak": field_values.get("kaynak") or "-",
             "potansiyel_urun": field_values.get("potansiyel_urun") or "-",
-            "durum": field_values.get("durum") or "-",
-            "next_action": next_action,
-            "next_action_date": next_action_date,
+            "custom_durum": field_values.get("durum") or "-",
+            "follow_up_action": follow_up_action,
+            "follow_up_date": follow_up_date,
             "priority": "",
         }
         return [row_map[key] for key, _header in self.table_columns]

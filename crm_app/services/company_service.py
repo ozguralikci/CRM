@@ -10,7 +10,13 @@ from crm_app.services.field_service import delete_entity_field_values, save_fiel
 from crm_app.models import Action, Company, Offer, Opportunity, Sample
 
 
-def list_companies(search_text: str = "", priority: int | None = None) -> list[Company]:
+def list_companies(
+    search_text: str = "",
+    priority: int | None = None,
+    *,
+    status: str | None = None,
+    order_by_score: bool = False,
+) -> list[Company]:
     with get_session() as session:
         query = (
             select(Company)
@@ -18,7 +24,6 @@ def list_companies(search_text: str = "", priority: int | None = None) -> list[C
                 selectinload(Company.contacts),
                 selectinload(Company.actions),
             )
-            .order_by(Company.created_at.desc())
         )
 
         if search_text:
@@ -31,6 +36,14 @@ def list_companies(search_text: str = "", priority: int | None = None) -> list[C
 
         if priority:
             query = query.where(Company.priority == priority)
+
+        if status:
+            query = query.where(Company.status == status)
+
+        if order_by_score:
+            query = query.order_by(Company.score.desc(), Company.created_at.desc())
+        else:
+            query = query.order_by(Company.created_at.desc())
 
         return list(session.scalars(query).unique())
 
