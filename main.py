@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import sys
 import logging
+from pathlib import Path
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from crm_app.database.session import init_database
+from crm_app.services.backup_service import run_startup_checks_and_backup
 from crm_app.ui.main_window import run
 from crm_app.utils.app_paths import get_database_path, get_error_log_file_path
 from crm_app.utils.logging_utils import append_fatal_report, configure_logging, log_exception
@@ -46,6 +48,11 @@ def main() -> None:
     sys.excepthook = _handle_unexpected_exception
     LOGGER.info("Application starting | database_path=%s", get_database_path())
     try:
+        run_startup_checks_and_backup(
+            db_path=Path("D:/CRM/crm.sqlite"),
+            backups_dir=Path("D:/CRM/backups"),
+            retention=30,
+        )
         init_database()
         LOGGER.info("Database initialization completed")
         raise SystemExit(run())
