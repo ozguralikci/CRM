@@ -30,12 +30,14 @@ from PySide6.QtWidgets import (
 
 from crm_app.database.session import get_session
 from crm_app.models.research_target import ResearchTarget
+from crm_app.services.ai_analysis_service import run_ai_analysis_for_target
 from crm_app.services.research_target_service import (
     basic_duplicate_check,
     create_research_target,
     get_research_target,
     list_research_targets,
     update_research_target,
+    update_research_target_ai_analysis,
     update_research_target_scores,
 )
 from crm_app.ui.list_page_helpers import set_table_empty_state
@@ -206,6 +208,7 @@ class ResearchTargetsPage(QWidget):
         self._scoring_config_loaded: bool = False
         self._scoring_config: dict[str, Any] | None = None
         self._current_breakdown_for_dialog: dict[str, Any] | None = None
+        self._ai_preview_by_target_id: dict[int, dict[str, Any]] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -340,9 +343,25 @@ class ResearchTargetsPage(QWidget):
         edit_btn.clicked.connect(self._edit_selected)
         btn_row.addWidget(edit_btn)
 
+        ai_btn_row = QHBoxLayout()
+        ai_btn_row.setContentsMargins(0, 0, 0, 0)
+        ai_btn_row.setSpacing(8)
+        self.ai_analyze_btn = QPushButton("AI Analiz Et")
+        set_button_role(self.ai_analyze_btn, "secondary")
+        self.ai_analyze_btn.setEnabled(False)
+        self.ai_analyze_btn.clicked.connect(self._run_ai_analysis)
+        self.ai_save_analysis_btn = QPushButton("AI Analizini Kaydet")
+        set_button_role(self.ai_save_analysis_btn, "secondary")
+        self.ai_save_analysis_btn.setEnabled(False)
+        self.ai_save_analysis_btn.clicked.connect(self._save_ai_analysis)
+        ai_btn_row.addWidget(self.ai_analyze_btn)
+        ai_btn_row.addWidget(self.ai_save_analysis_btn)
+        ai_btn_row.addStretch(1)
+
         rl.addWidget(detail_title)
         rl.addWidget(self.detail_body, 1)
         rl.addLayout(btn_row)
+        rl.addLayout(ai_btn_row)
 
         splitter.addWidget(left_wrap)
         splitter.addWidget(right_wrap)
@@ -396,6 +415,8 @@ class ResearchTargetsPage(QWidget):
             self.detail_body.clear()
             self.save_score_btn.setEnabled(False)
             self.detail_breakdown_btn.setEnabled(False)
+            self.ai_analyze_btn.setEnabled(False)
+            self.ai_save_analysis_btn.setEnabled(False)
             self._current_breakdown_for_dialog = None
             return
 
@@ -438,6 +459,118 @@ class ResearchTargetsPage(QWidget):
                 self._populate_detail(idx)
         self._sync_save_score_button()
         self._sync_detail_breakdown_button()
+        self._sync_ai_buttons()
+
+    def _sync_ai_buttons(self) -> None:
+        row = self._current_row_index()
+        ok = row is not None and 0 <= row < len(self._rows)
+        self.ai_analyze_btn.setEnabled(ok)
+        if not ok:
+            self.ai_save_analysis_btn.setEnabled(False)
+            return
+        tid = self._rows[row].id
+        self.ai_save_analysis_btn.setEnabled(tid in self._ai_preview_by_target_id)
+
+    def _lines_from_ai_display_dict(self, data: dict[str, Any], *, is_preview: bool) -> list[str]:
+        lines: list[str] = []
+        if is_preview:
+            lines.append("Durum: Önizleme (kayıtlı değil)")
+            lines.append("")
+        lines.append(f"Özet: {data.get('summary', '-')}")
+        lines.append(f"Uygunluk: {data.get('suitability', '-')}")
+        lines.append("")
+        lines.append("Ürünler:")
+        for p in data.get("products") or []:
+            lines.append(f"  • {p}")
+        if not (data.get("products") or []):
+            lines.append("  • —")
+        lines.append("")
+        lines.append("Departmanlar:")
+        for d in data.get("departments") or []:
+            lines.append(f"  • {d}")
+        if not (data.get("departments") or []):
+            lines.append("  • —")
+        lines.append("")
+        lines.append(f"Satış stratejisi: {data.get('sales_strategy', '-')}")
+        lines.append("")
+        lines.append("Riskler:")
+        for r in data.get("risks") or []:
+            lines.append(f"  • {r}")
+        if not (data.get("risks") or []):
+            lines.append("  • —")
+        cn = (data.get("confidence_notes") or "").strip()
+        disc = (data.get("disclaimer") or "").strip()
+        if cn or disc:
+            lines.append("")
+            if cn:
+                lines.append(f"Güven notu: {cn}")
+            if disc:
+                lines.append(f"Uyarı: {disc}")
+        return lines
+
+    def _build_ai_assessment_section(self, t: ResearchTarget) -> list[str]:
+        tid = t.id
+        preview = self._ai_preview_by_target_id.get(tid)
+        if preview:
+            return self._lines_from_ai_display_dict(preview, is_preview=True)
+        raw = (getattr(t, "ai_analysis_json", None) or "").strip()
+        if raw:
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                return ["Kayıtlı AI verisi okunamadı."]
+            if not isinstance(data, dict):
+                return ["Kayıtlı AI verisi geçersiz."]
+            meta: list[str] = []
+            ts = getattr(t, "ai_analysis_updated_at", None)
+            model = getattr(t, "ai_model", None) or "-"
+            ver = getattr(t, "ai_analysis_version", None) or data.get("schema_version") or "-"
+            ts_txt = ts.strftime("%d.%m.%Y %H:%M") if ts else "-"
+            meta.append(f"Sürüm: {ver}  ·  Model: {model}  ·  Zaman: {ts_txt}")
+            meta.append("")
+            return meta + self._lines_from_ai_display_dict(data, is_preview=False)
+        return ["Henüz AI analizi yok. «AI Analiz Et» ile başlatın."]
+
+    def _run_ai_analysis(self) -> None:
+        row = self._current_row_index()
+        if row is None or row < 0 or row >= len(self._rows):
+            return
+        t = self._rows[row]
+        answer = QMessageBox.question(
+            self,
+            "AI Analizi",
+            "AI analizi çalıştırılacak. Devam edilsin mi?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = run_ai_analysis_for_target(t)
+            self._ai_preview_by_target_id[t.id] = result
+            self._populate_detail(row)
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Analizi", f"Islem basarisiz:\n{exc}")
+
+    def _save_ai_analysis(self) -> None:
+        row = self._current_row_index()
+        if row is None or row < 0 or row >= len(self._rows):
+            return
+        t = self._rows[row]
+        tid = t.id
+        preview = self._ai_preview_by_target_id.get(tid)
+        if not preview:
+            return
+        session = get_session()
+        try:
+            update_research_target_ai_analysis(session, tid, preview, model_name="mock")
+        except Exception as exc:
+            QMessageBox.critical(self, "AI Analizi", f"Kaydedilemedi:\n{exc}")
+            return
+        finally:
+            session.close()
+        del self._ai_preview_by_target_id[tid]
+        self.refresh_table(preserve_target_id=tid)
 
     def _sync_save_score_button(self) -> None:
         row = self._current_row_index()
@@ -985,6 +1118,7 @@ class ResearchTargetsPage(QWidget):
             self.detail_body.clear()
             self._sync_save_score_button()
             self._sync_detail_breakdown_button()
+            self._sync_ai_buttons()
             return
         self._populate_detail(row)
         self._sync_save_score_button()
@@ -994,6 +1128,8 @@ class ResearchTargetsPage(QWidget):
             self.detail_body.clear()
             self.detail_breakdown_btn.setEnabled(False)
             self._current_breakdown_for_dialog = None
+            self.ai_analyze_btn.setEnabled(False)
+            self.ai_save_analysis_btn.setEnabled(False)
             return
         t = self._rows[row]
         comment, suggestion = self._build_fit_comment(t)
@@ -1031,6 +1167,10 @@ class ResearchTargetsPage(QWidget):
             *self._build_skor_analizi_section(t),
             "",
             "",
+            "AI DEĞERLENDİRMESİ",
+            *self._build_ai_assessment_section(t),
+            "",
+            "",
             "ÜRÜN UYUMU SİNYALLERİ",
             t.product_fit_signals or "-",
             "",
@@ -1040,6 +1180,7 @@ class ResearchTargetsPage(QWidget):
         ]
         self.detail_body.setPlainText("\n".join(lines))
         self._sync_detail_breakdown_button()
+        self._sync_ai_buttons()
 
     def _edit_selected(self, _item: QTableWidgetItem | None = None) -> None:
         row = self._current_row_index()

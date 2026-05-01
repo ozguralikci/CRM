@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Any
@@ -149,6 +150,29 @@ def update_research_target_scores(
         target.rules_score_breakdown = breakdown_json
         target.rules_score_version = (rules_version or "").strip() or None
         target.rules_score_updated_at = updated_at
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+
+
+def update_research_target_ai_analysis(
+    session: Session,
+    target_id: int,
+    analysis: dict[str, Any],
+    *,
+    model_name: str = "mock",
+) -> None:
+    """Yalnızca AI analiz alanlarını günceller; kural skoruna dokunmaz."""
+    try:
+        target = session.get(ResearchTarget, target_id)
+        if target is None:
+            raise ValueError(f"Hedef bulunamadi (id={target_id}).")
+        ver = str(analysis.get("schema_version") or "ai_analysis_v1")
+        target.ai_analysis_json = json.dumps(analysis, ensure_ascii=False)
+        target.ai_analysis_version = ver
+        target.ai_model = model_name
+        target.ai_analysis_updated_at = datetime.utcnow()
         session.commit()
     except Exception:
         session.rollback()

@@ -56,6 +56,7 @@ def init_database() -> None:
     ensure_users_schema()
     ensure_companies_sales_schema()
     ensure_research_targets_rules_schema()
+    ensure_research_targets_ai_schema()
     ensure_custom_field_schema()
     ensure_default_admin()
     seed_sample_data()
@@ -137,6 +138,32 @@ def ensure_research_targets_rules_schema() -> None:
             connection.execute(text("ALTER TABLE research_targets ADD COLUMN rules_score_version TEXT"))
         if "rules_score_updated_at" not in columns:
             connection.execute(text("ALTER TABLE research_targets ADD COLUMN rules_score_updated_at DATETIME"))
+
+
+def ensure_research_targets_ai_schema() -> None:
+    """Additive kolonlar: AI analiz JSON (FAZ 3B)."""
+    _require_configured()
+    with engine.begin() as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
+        if "research_targets" not in tables:
+            return
+
+        columns = {
+            row[1] for row in connection.execute(text("PRAGMA table_info(research_targets)")).fetchall()
+        }
+        if "ai_analysis_json" not in columns:
+            connection.execute(text("ALTER TABLE research_targets ADD COLUMN ai_analysis_json TEXT"))
+        if "ai_analysis_version" not in columns:
+            connection.execute(text("ALTER TABLE research_targets ADD COLUMN ai_analysis_version TEXT"))
+        if "ai_model" not in columns:
+            connection.execute(text("ALTER TABLE research_targets ADD COLUMN ai_model TEXT"))
+        if "ai_analysis_updated_at" not in columns:
+            connection.execute(text("ALTER TABLE research_targets ADD COLUMN ai_analysis_updated_at DATETIME"))
 
 
 def ensure_companies_sales_schema() -> None:
