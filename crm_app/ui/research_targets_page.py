@@ -44,6 +44,12 @@ from crm_app.ui.styles import (
     style_dialog_buttons,
 )
 
+try:
+    from crm_app.scoring.surlas_scoring_v1 import compute_fit_score, load_scoring_config
+except ImportError:
+    compute_fit_score = None  # type: ignore[misc, assignment]
+    load_scoring_config = None  # type: ignore[misc, assignment]
+
 
 class ResearchTargetDialog(QDialog):
     def __init__(self, target: ResearchTarget | None = None, parent: QWidget | None = None) -> None:
@@ -193,6 +199,8 @@ class ResearchTargetsPage(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: list[ResearchTarget] = []
+        self._scoring_config_loaded: bool = False
+        self._scoring_config: dict[str, Any] | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -235,7 +243,7 @@ class ResearchTargetsPage(QWidget):
         self.status_filter = QComboBox()
         self.status_filter.addItem("Durum: Tum", "")
         for s in ["new", "researching", "qualified", "paused", "rejected"]:
-            self.status_filter.addItem(s, s)
+            self.status_filter.addItem(self._status_label_tr(s), s)
 
         refresh_btn = QPushButton("Yenile")
         set_button_role(refresh_btn, "ghost")
@@ -287,6 +295,7 @@ class ResearchTargetsPage(QWidget):
             }
             """
         )
+        self.table.itemClicked.connect(self._on_item_clicked)
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
         self.table.itemDoubleClicked.connect(self._edit_selected)
 
@@ -395,6 +404,16 @@ class ResearchTargetsPage(QWidget):
                 self.table.setItem(row, col, item)
         self.table.resizeColumnsToContents()
         self.detail_body.clear()
+        if len(self._rows) == 1:
+            self.table.selectRow(0)
+
+    def _on_item_clicked(self, _item: QTableWidgetItem) -> None:
+        row = self._current_row_index()
+        if row is None:
+            return
+        if row < 0 or row >= len(self._rows):
+            return
+        self._populate_detail(row)
 
     def _update_metrics(self) -> None:
         total = len(self._rows)
@@ -437,25 +456,35 @@ class ResearchTargetsPage(QWidget):
             return "yellow"
         return "red"
 
+    def _status_label_tr(self, status_key: str) -> str:
+        mapping = {
+            "new": "Yeni",
+            "researching": "Araştırılıyor",
+            "qualified": "Uygun",
+            "rejected": "Düşük",
+            "paused": "Beklemede",
+        }
+        return mapping.get(status_key, status_key)
+
     def _format_status_cell(self, status_key: str) -> str:
         bucket = self._status_bucket(status_key)
         prefix = {"yellow": "[Yeni]", "green": "[Uygun]", "red": "[Dusuk]"}.get(bucket, "[Dusuk]")
-        return f"{prefix} {status_key}"
+        label = self._status_label_tr(status_key)
+        return f"{prefix} {label}"
 
     def _build_fit_comment(self, t: ResearchTarget) -> tuple[str, str]:
         score = int(t.fit_score or 0)
         missing_web = not (t.website or "").strip()
         missing_li = not (t.linkedin_company_url or "").strip()
         thin_signals = len((t.product_fit_signals or "").strip()) < 12
+        missing_sector = not (t.sector or "").strip()
 
-        if missing_web and missing_li:
-            headline = "Veri yetersiz: Web ve LinkedIn eksik; kanit toplamadan skor guvenilir degil."
-        elif missing_web:
-            headline = "Web sitesi eksik; firma dogrulama ve urun uyumu icin site onerilir."
-        elif missing_li:
+        static_gap_msg = "Veri eksik. Website, sektör ve ürün uyumu sinyalleri eklenmeli."
+        if score == 0 or missing_web or missing_sector or thin_signals:
+            return static_gap_msg, static_gap_msg
+
+        if missing_li:
             headline = "LinkedIn sirket linki eksik; karar verici haritalama zorlasir."
-        elif thin_signals:
-            headline = "Urun uyumu sinyalleri zayif; sektor/uretim yapisi notlarini genisletin."
         elif score >= 70:
             headline = "Skor yuksek gorunuyor; bir sonraki adim netlestirme ve karar verici bulma."
         elif score > 40:
@@ -464,16 +493,173 @@ class ResearchTargetsPage(QWidget):
             headline = "Dusuk potansiyel gorunumu; dislamadan once 2-3 kanit kaydi ekleyin."
 
         tips: list[str] = []
-        if missing_web:
-            tips.append("- Website ekleyin (veya resmi alan adini dogrulayin).")
         if missing_li:
             tips.append("- LinkedIn sirket URL'sini ekleyin.")
-        if thin_signals:
-            tips.append("- Urun uyumu sinyallerine ORing/conta/tekn parca ipuclari yazin.")
-        if not tips:
-            tips.append("- Kaynak notlari ekleyin ve durumu 'researching' yapin.")
+        if score >= 70:
+            tips.append("- Kaynak notlari ekleyin ve durumu daraltin (Uygun / Dusuk).")
+        elif score > 40:
+            tips.append("- Sektor ve urun uyumu sinyallerini guclendirin.")
+        else:
+            tips.append("- En az iki kanit kaynagi ekleyin; gerekiyorsa statuyu Dusuk olarak kapatin.")
 
         return headline, "\n".join(tips)
+
+    def _get_scoring_config(self) -> dict[str, Any] | None:
+        if self._scoring_config_loaded:
+            return self._scoring_config
+        self._scoring_config_loaded = True
+        if load_scoring_config is None:
+            self._scoring_config = None
+            return None
+        try:
+            self._scoring_config = load_scoring_config()
+        except Exception:
+            self._scoring_config = None
+        return self._scoring_config
+
+    def _collect_rules_based_reasons_tr(self, result: dict[str, Any]) -> list[tuple[int, str]]:
+        bd = result.get("breakdown")
+        if not isinstance(bd, dict):
+            return []
+        ranked: list[tuple[int, str]] = []
+        comps = bd.get("components")
+        if isinstance(comps, dict):
+            sector = comps.get("sector")
+            if isinstance(sector, dict):
+                if sector.get("exclude_hit"):
+                    cap = sector.get("cap_final_score")
+                    cap_txt = f", genel skor tavanı ~{cap}" if cap is not None else ""
+                    pat = sector.get("matched_pattern") or "?"
+                    ranked.append(
+                        (
+                            50,
+                            f"Sektör dışlama kuralı tetiklendi ({pat}){cap_txt}.",
+                        )
+                    )
+                else:
+                    pts = int(sector.get("points") or 0)
+                    tier = sector.get("matched_tier") or "bilinmiyor"
+                    if pts > 0:
+                        ranked.append((pts + 5, f"Sektör uyumu ({tier}): +{pts} puan."))
+                    elif not (sector.get("raw_sector") or "").strip():
+                        ranked.append((25, "Sektör alanı boş; sektör puanı alınamadı."))
+
+            prod = comps.get("product_signals")
+            if isinstance(prod, dict):
+                for g in prod.get("groups") or []:
+                    if not isinstance(g, dict):
+                        continue
+                    gp = int(g.get("points") or 0)
+                    if gp <= 0:
+                        continue
+                    gid = g.get("id") or "grup"
+                    kws = g.get("keywords_hit") or []
+                    kw_txt = f" ({', '.join(str(x) for x in kws[:3])})" if kws else ""
+                    ranked.append((gp + 2, f"Ürün uyumu ({gid}){kw_txt}: +{gp} puan."))
+                neg = int(prod.get("negative_subtract") or 0)
+                if neg > 0:
+                    nh = prod.get("negative_hits") or []
+                    htxt = ", ".join(str(x) for x in nh[:4])
+                    ranked.append((neg + 8, f"Riskli anahtar kelimeler ({htxt}): −{neg} puan."))
+
+            op = comps.get("operational")
+            if isinstance(op, dict):
+                for m in op.get("matched") or []:
+                    if not isinstance(m, dict):
+                        continue
+                    pts = int(m.get("points") or 0)
+                    if pts <= 0:
+                        continue
+                    lbl = m.get("type") or "alan"
+                    pat = m.get("pattern") or ""
+                    ranked.append((pts + 1, f"Operasyonel uygunluk ({lbl}: {pat}): +{pts} puan."))
+
+            ev = comps.get("evidence")
+            if isinstance(ev, dict):
+                for it in ev.get("items") or []:
+                    if not isinstance(it, dict):
+                        continue
+                    pts = int(it.get("points") or 0)
+                    if pts <= 0:
+                        continue
+                    fld = it.get("field") or "alan"
+                    ranked.append((pts, f"Veri kanıtı ({fld}): +{pts} puan."))
+
+        pens = bd.get("penalties")
+        if isinstance(pens, dict):
+            for ln in pens.get("lines") or []:
+                if not isinstance(ln, dict):
+                    continue
+                code = str(ln.get("code") or "")
+                pts = int(ln.get("points") or 0)
+                mag = abs(pts)
+                if code == "missing_website":
+                    msg = f"Web sitesi eksik: −{pts} puan cezası."
+                elif code == "missing_sector":
+                    msg = f"Sektör bilgisi eksik: −{pts} puan cezası."
+                elif code == "missing_or_thin_signals":
+                    msg = f"Ürün uyumu metni eksik veya çok kısa: −{pts} puan cezası."
+                elif code == "critical_bundle_2of3":
+                    msg = f"Birden fazla kritik alan eksik (paket cezası): −{pts} puan."
+                else:
+                    msg = f"Cezalandırma ({code}): −{pts} puan."
+                ranked.append((mag + 12, msg))
+
+        sums = bd.get("sums")
+        if isinstance(sums, dict):
+            for cap in sums.get("caps_applied") or []:
+                if not isinstance(cap, dict):
+                    continue
+                reason = str(cap.get("reason") or "")
+                cap_v = cap.get("cap")
+                if reason == "sector_exclude":
+                    ranked.append((45, f"Genel skor tavanı uygulandı (sektör dışlama), üst sınır: {cap_v}."))
+                elif reason == "critical_data_bundle":
+                    ranked.append((44, f"Kritik veri eksikliği nedeniyle skor tavanı: {cap_v}."))
+
+        ranked.sort(key=lambda x: x[0], reverse=True)
+        return ranked
+
+    def _top_reason_lines_tr(self, result: dict[str, Any], *, limit: int = 5) -> list[str]:
+        ranked = self._collect_rules_based_reasons_tr(result)
+        lines: list[str] = []
+        for _, msg in ranked[:limit]:
+            lines.append(f"• {msg}")
+        if not lines:
+            lines.append("• Özet neden üretilemedi (kurallar eşleşmedi veya veri çok seyrek).")
+        return lines
+
+    def _build_rules_based_preview_block(self, t: ResearchTarget) -> list[str]:
+        cfg = self._get_scoring_config()
+        if cfg is None:
+            return [
+                "Konfigürasyon dosyası yüklenemedi veya PyYAML eksik; kural tabanlı önizleme kullanılamıyor.",
+                "(Uygulama çalışmaya devam eder.)",
+            ]
+        if compute_fit_score is None:
+            return ["Skor önizlemesi hesaplanamadı."]
+        try:
+            result = compute_fit_score(t, cfg)
+        except Exception:
+            return ["Skor önizlemesi hesaplanamadı."]
+
+        score_v = result.get("score")
+        conf_v = result.get("confidence")
+        cat_v = result.get("category")
+        rec_v = result.get("recommendation")
+        rv = result.get("breakdown")
+        ruleset = rv.get("ruleset_version") if isinstance(rv, dict) else "?"
+
+        block = [
+            f"Önizleme skoru: {score_v} / 100   |   Güven: {conf_v}%",
+            f"Kategori: {cat_v}",
+            f"Öneri: {rec_v}",
+            f"(Kural seti: {ruleset} — veritabanına yazılmaz; tablodaki Skor kayıtlı değerdir.)",
+            "",
+            "Öne çıkan nedenler:",
+            *self._top_reason_lines_tr(result, limit=5),
+        ]
+        return block
 
     def add_target(self) -> None:
         dialog = ResearchTargetDialog(parent=self)
@@ -493,9 +679,18 @@ class ResearchTargetsPage(QWidget):
         if row is None or row < 0 or row >= len(self._rows):
             self.detail_body.clear()
             return
+        self._populate_detail(row)
+
+    def _populate_detail(self, row: int) -> None:
+        if row < 0 or row >= len(self._rows):
+            self.detail_body.clear()
+            return
         t = self._rows[row]
         comment, suggestion = self._build_fit_comment(t)
+        sk = (t.status or "new").strip().lower()
+        status_tr = self._status_label_tr(sk)
         lines = [
+            "=== Genel ===",
             f"Firma: {t.name}",
             f"Web: {t.website or '-'}",
             f"LinkedIn: {t.linkedin_company_url or '-'}",
@@ -504,18 +699,21 @@ class ResearchTargetsPage(QWidget):
             f"Firma tipi: {t.company_type or '-'}",
             f"Uretim yapisi: {t.production_structure or '-'}",
             f"Uygunluk skoru: {t.fit_score}  |  Guven: {t.confidence:.1f}",
-            f"Durum: {t.status or '-'}",
+            f"Durum: {status_tr}",
             "",
-            "Uygunluk yorumu:",
+            "=== Uygunluk degerlendirmesi ===",
             comment,
             "",
-            "Onerilen sonraki adim:",
+            "=== Sonraki adim ===",
             suggestion,
             "",
-            "Urun uyumu sinyalleri:",
+            "=== Kural Tabanlı Skor Önizlemesi ===",
+            *self._build_rules_based_preview_block(t),
+            "",
+            "=== Urun uyumu sinyalleri ===",
             t.product_fit_signals or "-",
             "",
-            "Notlar:",
+            "=== Notlar ===",
             t.notes or "-",
         ]
         self.detail_body.setPlainText("\n".join(lines))
