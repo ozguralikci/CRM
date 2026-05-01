@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from crm_app.database.session import get_session
 from crm_app.models.research_target import ResearchTarget
 from crm_app.services.research_target_service import (
     basic_duplicate_check,
@@ -33,6 +34,7 @@ from crm_app.services.research_target_service import (
     get_research_target,
     list_research_targets,
     update_research_target,
+    update_research_target_scores,
 )
 from crm_app.ui.list_page_helpers import set_table_empty_state
 from crm_app.ui.styles import (
@@ -315,13 +317,23 @@ class ResearchTargetsPage(QWidget):
         self.detail_body.setPlaceholderText("Tablodan bir hedef secin.")
         self.detail_body.setMinimumHeight(280)
 
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 0, 0, 0)
+        btn_row.setSpacing(8)
+        self.save_score_btn = QPushButton("Skoru Kaydet")
+        set_button_role(self.save_score_btn, "secondary")
+        self.save_score_btn.setEnabled(False)
+        self.save_score_btn.clicked.connect(self._save_preview_score)
+        btn_row.addWidget(self.save_score_btn)
+        btn_row.addStretch(1)
         edit_btn = QPushButton("Duzenle")
         set_button_role(edit_btn, "secondary")
         edit_btn.clicked.connect(self._edit_selected)
+        btn_row.addWidget(edit_btn)
 
         rl.addWidget(detail_title)
         rl.addWidget(self.detail_body, 1)
-        rl.addWidget(edit_btn)
+        rl.addLayout(btn_row)
 
         splitter.addWidget(left_wrap)
         splitter.addWidget(right_wrap)
@@ -356,7 +368,7 @@ class ResearchTargetsPage(QWidget):
         layout.addWidget(hint_label)
         return {"card": card, "value": value_label}
 
-    def refresh_table(self) -> None:
+    def refresh_table(self, *, preserve_target_id: int | None = None) -> None:
         self._rows = list_research_targets(
             search=self.search_input.text().strip(),
             status=str(self.status_filter.currentData() or ""),
@@ -373,6 +385,7 @@ class ResearchTargetsPage(QWidget):
                 action_handler=self.add_target,
             )
             self.detail_body.clear()
+            self.save_score_btn.setEnabled(False)
             return
 
         self.table.clearSpans()
@@ -404,8 +417,81 @@ class ResearchTargetsPage(QWidget):
                 self.table.setItem(row, col, item)
         self.table.resizeColumnsToContents()
         self.detail_body.clear()
-        if len(self._rows) == 1:
-            self.table.selectRow(0)
+        pid = preserve_target_id
+        if pid is None and len(self._rows) == 1:
+            pid = self._rows[0].id
+        if pid is not None:
+            idx = next((i for i, x in enumerate(self._rows) if x.id == pid), None)
+            if idx is not None:
+                self.table.selectRow(idx)
+                self._populate_detail(idx)
+        self._sync_save_score_button()
+
+    def _sync_save_score_button(self) -> None:
+        row = self._current_row_index()
+        ok = row is not None and 0 <= row < len(self._rows)
+        self.save_score_btn.setEnabled(ok)
+
+    def _save_preview_score(self) -> None:
+        row = self._current_row_index()
+        if row is None or row < 0 or row >= len(self._rows):
+            return
+        t = self._rows[row]
+        target_id = t.id
+        db_score = int(t.fit_score or 0)
+        db_conf = float(t.confidence or 0.0)
+
+        cfg = self._get_scoring_config()
+        if cfg is None or compute_fit_score is None:
+            QMessageBox.warning(
+                self,
+                "Skor",
+                "Skor hesaplanamadi; yapilandirma yuklenemedi veya PyYAML eksik.",
+            )
+            return
+
+        try:
+            preview = compute_fit_score(t, cfg)
+        except Exception as exc:
+            QMessageBox.critical(self, "Skor", f"Skor hesaplanamadi:\n{exc}")
+            return
+
+        new_score = int(preview.get("score", 0))
+        new_conf = float(preview.get("confidence", 0))
+
+        detail_msg = (
+            f"Mevcut skor (veritabani): {db_score}  |  Guven: {db_conf:.1f}\n"
+            f"Yeni skor (onizleme): {new_score}  |  Guven: {new_conf:.1f}\n\n"
+            "Bu işlem mevcut skoru güncelleyecek. Devam etmek istiyor musunuz?"
+        )
+        answer = QMessageBox.question(
+            self,
+            "Skoru Kaydet",
+            detail_msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            preview2 = compute_fit_score(t, cfg)
+            new_score = int(preview2.get("score", 0))
+            new_conf = float(preview2.get("confidence", 0))
+        except Exception as exc:
+            QMessageBox.critical(self, "Skor", f"Skor tekrar hesaplanamadi:\n{exc}")
+            return
+
+        session = get_session()
+        try:
+            update_research_target_scores(session, target_id, new_score, new_conf)
+        except Exception as exc:
+            QMessageBox.critical(self, "Skor", f"Kaydedilemedi:\n{exc}")
+            return
+        finally:
+            session.close()
+
+        self.refresh_table(preserve_target_id=target_id)
 
     def _on_item_clicked(self, _item: QTableWidgetItem) -> None:
         row = self._current_row_index()
@@ -678,8 +764,10 @@ class ResearchTargetsPage(QWidget):
         row = self._current_row_index()
         if row is None or row < 0 or row >= len(self._rows):
             self.detail_body.clear()
+            self._sync_save_score_button()
             return
         self._populate_detail(row)
+        self._sync_save_score_button()
 
     def _populate_detail(self, row: int) -> None:
         if row < 0 or row >= len(self._rows):

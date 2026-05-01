@@ -5,6 +5,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
 from crm_app.database.session import get_session
 from crm_app.models.research_target import ResearchTarget
@@ -125,3 +126,22 @@ def update_research_target(target_id: int, data: dict[str, Any]) -> None:
         for field, value in payload.items():
             setattr(target, field, value)
         session.commit()
+
+
+def update_research_target_scores(
+    session: Session,
+    target_id: int,
+    fit_score: int,
+    confidence: float,
+) -> None:
+    """Yalnızca fit_score ve confidence alanlarını günceller; hata halinde rollback."""
+    try:
+        target = session.get(ResearchTarget, target_id)
+        if target is None:
+            raise ValueError(f"Hedef bulunamadi (id={target_id}).")
+        target.fit_score = max(0, min(100, int(fit_score)))
+        target.confidence = max(0.0, min(100.0, float(confidence)))
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
