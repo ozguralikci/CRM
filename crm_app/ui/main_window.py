@@ -28,6 +28,7 @@ from crm_app.ui.field_management_page import FieldManagementPage
 from crm_app.ui.opportunities_page import OpportunitiesPage
 from crm_app.ui.offers_page import OffersPage
 from crm_app.ui.samples_page import SamplesPage
+from crm_app.ui.users_page import UsersPage
 from crm_app.ui.styles import build_stylesheet
 from crm_app.ui.login_dialog import LoginDialog
 from crm_app.ui.change_password_dialog import ChangePasswordDialog
@@ -50,8 +51,9 @@ class MainWindow(QMainWindow):
         "Teklifler": QStyle.StandardPixmap.SP_DialogSaveButton,
         "Numuneler": QStyle.StandardPixmap.SP_FileDialogContentsView,
         "Alan Yonetimi": QStyle.StandardPixmap.SP_FileDialogInfoView,
+        "Kullanıcılar": QStyle.StandardPixmap.SP_DialogYesButton,
     }
-    menu_items = [
+    base_menu_items = [
         "Dashboard",
         "Sirketler",
         "Kisiler",
@@ -62,7 +64,7 @@ class MainWindow(QMainWindow):
         "Alan Yonetimi",
     ]
 
-    def __init__(self, *, active_db_path: str = "") -> None:
+    def __init__(self, *, active_db_path: str = "", current_username: str = "") -> None:
         super().__init__()
         self.setWindowTitle("CRM - Satis Yonetimi")
         self.resize(1440, 860)
@@ -121,6 +123,8 @@ class MainWindow(QMainWindow):
 
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("SidebarMenu")
+        is_admin = (current_username or "").strip() == "admin"
+        self.menu_items = list(self.base_menu_items) + (["Kullanıcılar"] if is_admin else [])
         for item in self.menu_items:
             menu_item = QListWidgetItem(item, self.sidebar)
             menu_item.setIcon(self.style().standardIcon(self.menu_icon_map[item]))
@@ -140,6 +144,7 @@ class MainWindow(QMainWindow):
         self.offers_page = OffersPage()
         self.samples_page = SamplesPage()
         self.field_management_page = FieldManagementPage()
+        self.users_page = UsersPage() if is_admin else None
 
         self.pages.addWidget(self.dashboard_page)
         self.pages.addWidget(self.companies_page)
@@ -149,6 +154,8 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.offers_page)
         self.pages.addWidget(self.samples_page)
         self.pages.addWidget(self.field_management_page)
+        if self.users_page is not None:
+            self.pages.addWidget(self.users_page)
         self.page_refresh_callbacks = {
             0: ("dashboard", self.dashboard_page.refresh),
             1: ("companies", self.companies_page.refresh_table),
@@ -159,6 +166,8 @@ class MainWindow(QMainWindow):
             6: ("samples", self.samples_page.refresh_table),
             7: ("field_management", self.field_management_page.refresh_table),
         }
+        if self.users_page is not None:
+            self.page_refresh_callbacks[len(self.page_refresh_callbacks)] = ("users", self.users_page.refresh_table)
 
         page_frame = QFrame()
         page_frame.setObjectName("PageFrame")
@@ -208,7 +217,7 @@ def run(*, active_db_path: str = "") -> int:
         if not change_dialog.exec():
             return 0
 
-    window = MainWindow(active_db_path=active_db_path)
+    window = MainWindow(active_db_path=active_db_path, current_username=user.username)
     window.show()
 
     return app.exec()
