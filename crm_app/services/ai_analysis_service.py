@@ -6,7 +6,10 @@ from typing import Any
 
 from crm_app.config.ai_settings import effective_openai_model, load_ai_settings
 from crm_app.models.research_target import ResearchTarget
-from crm_app.services.ai_prompts import build_research_target_ai_messages
+from crm_app.services.ai_prompts import (
+    build_research_target_ai_messages,
+    get_website_keyword_labels,
+)
 from crm_app.services.openai_client import (
     OpenAIAnalysisClientError,
     OpenAIInvalidResponseJsonError,
@@ -101,6 +104,66 @@ def _normalize_decision(val: Any) -> str:
     )
 
 
+def _needs_inference_fill(s: str) -> bool:
+    """Boş veya yalnızca 'belirsiz' bırakılmış alanları doldurmak için."""
+    x = (s or "").strip()
+    if not x:
+        return True
+    xl = x.lower()
+    if xl == "belirsiz":
+        return True
+    if xl.startswith("belirsiz") and len(x) < 40:
+        return True
+    return False
+
+
+def _postprocess_website_inference(target: ResearchTarget, out: dict[str, Any]) -> dict[str, Any]:
+    """Web sitesi varken boş veya yalnızca 'belirsiz' kalan kritik alanlara düşük güvenli tahmin uygular."""
+    o = dict(out)
+    if not (target.website or "").strip():
+        return o
+
+    if _needs_inference_fill(o.get("sector", "")):
+        o["sector"] = (
+            "tahmini: sanayi / OEM veya üretim tedariki "
+            "(web domain ipucu; düşük güven; CRM sektör alanı ile doğrulayın)"
+        )
+
+    labels = get_website_keyword_labels(target)
+    if _needs_inference_fill(o.get("technical_usage", "")):
+        if labels:
+            o["technical_usage"] = (
+                "tahmini: "
+                + "; ".join(labels)
+                + " bağlamında makine/hat bileşenleri ve olası sızdırmazlık noktaları "
+                "(web anahtar sözcük; düşük güven)"
+            )
+        else:
+            o["technical_usage"] = (
+                "tahmini: endüstriyel tesis veya makine parkı bileşenleri "
+                "(web domain; içerik okunmadı; düşük güven)"
+            )
+
+    if _needs_inference_fill(o.get("production_structure", "")):
+        o["production_structure"] = (
+            "tahmini: seri veya siparişe üretim / montaj (web ipucu; düşük güven)"
+        )
+
+    if labels:
+        if _needs_inference_fill(o.get("sealing_need", "")):
+            o["sealing_need"] = (
+                "tahmini: olası — "
+                + labels[0]
+                + " hattında bağlantı sızdırmazlığı (düşük güven)"
+            )
+        if _needs_inference_fill(o.get("sealing_where", "")):
+            o["sealing_where"] = (
+                "tahmini: flanş, manşon veya hortum birleşimi (anahtar sözcük ipucu; düşük güven)"
+            )
+
+    return o
+
+
 def validate_and_normalize_panel_ai_dict(raw: dict[str, Any]) -> dict[str, Any]:
     """Panel/OpenAI birleşik şema — DB öncesi doğrulama."""
     if not isinstance(raw, dict):
@@ -153,14 +216,18 @@ def format_panel_ai_user_message(exc: BaseException) -> str:
     return f"İşlem başarısız: {exc}"
 
 
-def _mock_panel_unified_payload() -> dict[str, Any]:
-    return {
-        "summary": "Üretim hattında sıvı/gaz bağlantılarında teknik conta ihtimali; kanıt sınırlı.",
+def _mock_panel_unified_payload(target: ResearchTarget | None = None) -> dict[str, Any]:
+    blob = f"{(target.website or '') if target else ''}{(target.name or '') if target else ''}".lower()
+    base: dict[str, Any] = {
+        "summary": (
+            "Kayıtta ürün sinyali var; sıvı/gaz bağlantılarında conta/O-ring ihtimali "
+            "(tahmini; teknik doğrulama gerekir)."
+        ),
         "sector": "Otomotiv Yan Sanayi",
         "products": ["Statik conta", "FKM O-ring"],
         "departments": ["Satın alma", "Üretim bakım"],
         "sales_strategy": "Teknik veri ve numune onayı ile satın alma ile temas.",
-        "risks": ["Fiyat rekabeti", "OEM onay sureci"],
+        "risks": ["Fiyat rekabeti", "OEM onay süreci"],
         "first_message": (
             "Üretim hatlarınızdaki sızdırmazlık ihtiyacı için teknik kısa değerlendirme paylaşabilir miyiz?"
         ),
@@ -169,15 +236,51 @@ def _mock_panel_unified_payload() -> dict[str, Any]:
         "product_fit_signals": "Conta, O-ring, sızdırmazlık elemanları kullanımı",
         "notes_suggestion": "Hat bazlı conta tipi ve standart (DIN/ISO) netleştirin.",
         "technical_usage": (
-            "Montaj istasyonları ve hidrolik/pnömatik hat bağlantıları (kayıtta detay yok; belirsiz)."
+            "tahmini: kayıtta web yok; tipik imalat/montaj bileşenleri (düşük güven)."
         ),
-        "sealing_need": "belirsiz",
-        "sealing_where": "belirsiz",
+        "sealing_need": "tahmini: kayıt ince; teknik görüşmede netleştirin (düşük güven).",
+        "sealing_where": "tahmini: uygulama yeri teknik tespit gerekir (düşük güven).",
         "surlas_fit_products": ["Kauçuk conta", "O-ring"],
         "sales_difficulty": "Orta — teknik onay ve çoklu tedarikçi rekabeti.",
         "fit_score_percent": 55,
         "decision": "BEKLET",
     }
+    if target and (target.website or "").strip():
+        labels = get_website_keyword_labels(target)
+        if any(k in blob for k in ("otom", "auto", "vehicle", "otomotiv")):
+            base["sector"] = "tahmini: otomotiv yan sanayi veya taşıt ekipmanı (web/firma ipucu; düşük güven)"
+        elif any(k in blob for k in ("makina", "makine", "machine")):
+            base["sector"] = "tahmini: makine imalatı veya makine tedariki (web ipucu; düşük güven)"
+        elif any(k in blob for k in ("hidrolik", "hydraulic", "pnomatik", "pnömatik")):
+            base["sector"] = "tahmini: hidrolik/pnömatik sistem tedarikçisi (web ipucu; düşük güven)"
+        elif any(k in blob for k in ("kimya", "chemical", "chem")):
+            base["sector"] = "tahmini: kimya veya proses endüstrisi (web ipucu; düşük güven)"
+        elif any(k in blob for k in ("entegre", "panel")):
+            base["sector"] = "tahmini: entegre sistem / panel veya enerji altyapısı (web ipucu; düşük güven)"
+        else:
+            base["sector"] = "tahmini: endüstriyel OEM veya sistem tedarikçisi (domain ipucu; düşük güven)"
+        if labels:
+            base["technical_usage"] = (
+                "tahmini: "
+                + "; ".join(labels)
+                + " bağlamında hat ve birleşim bileşenleri (web; düşük güven)"
+            )
+            base["sealing_need"] = (
+                "tahmini: olası — " + labels[0] + " hattında bağlantı sızdırmazlığı (düşük güven)"
+            )
+            base["sealing_where"] = "tahmini: flanş/manşon veya hat birleşimi (düşük güven)"
+        else:
+            base["technical_usage"] = (
+                "tahmini: endüstriyel tesis veya üretim bileşenleri (web domain; düşük güven)"
+            )
+            base["sealing_need"] = (
+                "tahmini: bağlantı noktalarında conta ihtimali (web tek başına kanıt değil; düşük güven)"
+            )
+            base["sealing_where"] = (
+                "tahmini: uygulama noktası teknik görüşmede netleşmeli (düşük güven)"
+            )
+        base["production_structure"] = "tahmini: seri veya proses destekli üretim/montaj (web; düşük güven)"
+    return base
 
 
 def run_ai_suggest_for_dialog(context: dict[str, Any]) -> dict[str, Any]:
@@ -211,10 +314,12 @@ def run_ai_analysis_for_target(target: ResearchTarget) -> dict[str, Any]:
     """
     settings = load_ai_settings()
     if settings.provider == "mock":
-        return validate_and_normalize_panel_ai_dict(_mock_panel_unified_payload())
+        out = validate_and_normalize_panel_ai_dict(_mock_panel_unified_payload(target))
+        return _postprocess_website_inference(target, out)
 
     if settings.provider != "openai":
-        return validate_and_normalize_panel_ai_dict(_mock_panel_unified_payload())
+        out = validate_and_normalize_panel_ai_dict(_mock_panel_unified_payload(target))
+        return _postprocess_website_inference(target, out)
 
     if not settings.openai_api_key:
         raise OpenAIMissingApiKeyError(
@@ -230,4 +335,5 @@ def run_ai_analysis_for_target(target: ResearchTarget) -> dict[str, Any]:
         timeout=settings.openai_timeout_sec,
         max_output_tokens=settings.openai_max_output_tokens,
     )
-    return validate_and_normalize_panel_ai_dict(raw)
+    out = validate_and_normalize_panel_ai_dict(raw)
+    return _postprocess_website_inference(target, out)
