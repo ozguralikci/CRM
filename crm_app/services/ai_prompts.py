@@ -58,10 +58,17 @@ def build_research_target_ai_messages(target: ResearchTarget, max_chars: int = 2
         "'endüstriyel hat', 'genel bağlantılar'. "
         "Bunun yerine somut adlar kullan: örn. hidrolik pres silindir strok contası, pompa gövdesi sızdırmazlığı, "
         "vana gövdesi–aktüatör birleşimi, konveyör istasyonu kauçuk tampon/conta, flanş/manşon sızdırmazlığı. "
+        "Güven tonu (çıkarım kayıtta doğrudan yazmıyorsa ASLA kesin gerçek gibi yazma): "
+        "düşük güven → 'tahmini' veya 'tahmini olarak'; orta güven → 'muhtemel' veya 'yüksek olasılıkla'; "
+        "kayıtta açıkça yazılmış teknik bilgi → net cümle kullanılabilir. "
+        "KESİN edilgen ve kesin fiil kalıplarından kaçın: 'kullanmaktadır', 'kullanılmaktadır', 'ihtiyaç duyulmaktadır', "
+        "'gerekmektedir' (çıkarım için); yerine 'muhtemel olarak kullanılır', 'ihtiyaç olasılığı', 'tahmini olarak öngörülür'. "
+        "Çıkarılan makine kullanımını asla doğrulanmış gerçek gibi sunma; somut teknik detayı koru ama epistemik olarak yumuşak tut. "
         "technical_usage ZORUNLU: en az iki somut makine veya hat türü; çalışma koşulları (sıcaklık, toz, kimyasal) "
-        "ve bakım / aşınma riski cümleleri; hepsi mümkünse 'tahmini:' ile düşük güven etiketi. "
+        "ve bakım / aşınma riski cümleleri; çıkarımsa güven seviyesine göre 'tahmini olarak' / 'muhtemel' / 'yüksek olasılıkla' kullan. "
         "sealing_where ZORUNLU: metinde açıkça en az iki somut nokta geçsin "
-        "(hidrolik silindir, pompa, vana, pres, kesim hattı, taşıma/konveyör hattı, kapak/flanş/manşon vb.). "
+        "(hidrolik silindir, pompa, vana, pres, kesim hattı, taşıma/konveyör hattı, kapak/flanş/manşon vb.); "
+        "bunlar da çıkarımsa olasılık diliyle bağla. "
         "surlas_fit_products: teknik ürün adları (O-ring, hidrolik conta, düz/statik conta, özel teknik kauçuk parça); "
         "gerekirse yüksek sıcaklığa veya kimyasala dayanım, titreşim sönümleme gibi gereksinimleri ayrı öğe olarak yaz. "
         "sales_strategy: önce teknik ihtiyaç keşfi; numune/ölçü/teknik resim talebi; bakım ve tedarik sürekliliği; "
@@ -89,10 +96,11 @@ def build_research_target_ai_messages(target: ResearchTarget, max_chars: int = 2
         f"Notlar: {_clip(target.notes or '', 600)}",
         "",
         "Alan kuralları (metin içinde yerine getir):",
-        "- technical_usage: somut makine/hat + çalışma ortamı + bakım-aşınma; yasaklı genel laflardan kaçın.",
-        "- sealing_where: pompa/vana/pres/konveyör/flanş gibi en az iki somut sızdırmazlık yeri.",
-        "- surlas_fit_products: Sürlas tipi ürünler, teknik sıfatlar mümkünse ayrı liste öğesi.",
-        "- sales_strategy: keşif → numune/resim → süreklilik/arıza azaltma sırası.",
+        "- technical_usage: somut makine/hat + çalışma ortamı + bakım-aşınma; yasaklı genel laflardan kaçın; "
+        "çıkarım cümlelerinde tahmini/muhtemel/yüksek olasılıkla ile güveni belirt.",
+        "- sealing_where: pompa/vana/pres/konveyör/flanş gibi en az iki somut sızdırmazlık yeri; kesin iddia yok.",
+        "- surlas_fit_products: Sürlas tipi ürünler, teknik sıfatlar mümkünse ayrı liste öğesi; uygunluğu olasılıkla bağla.",
+        "- sales_strategy: keşif → numune/resim → süreklilik/arıza azaltma sırası; öneri dili, emir kipi değil.",
     ]
 
     if (target.website or "").strip():
@@ -106,7 +114,7 @@ def build_research_target_ai_messages(target: ResearchTarget, max_chars: int = 2
             parts.append(
                 "Anahtar sözcük ipuçları: "
                 + ", ".join(hits)
-                + " — tahminleri bu ipuçlarıyla hizala; 'tahmini:' kullan."
+                + " — tahminleri bu ipuçlarıyla hizala; güven düşükse 'tahmini olarak', orta ise 'muhtemel' kullan."
             )
 
     user_body = "\n".join(parts).strip()

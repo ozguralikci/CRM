@@ -175,11 +175,13 @@ _TECH_GENERIC_FOR_APPEND: tuple[str, ...] = (
 _APPEND_SIGNATURE = "Ek (otomatik somutlaştırma"
 _APPEND_TECH_USAGE = (
     " Ek (otomatik somutlaştırma; düşük güven): tahmini olarak hidrolik sistemler, pres makineleri "
-    "ve pompa/vana hatları; ayrıca konveyör bağlantı noktaları ve flanş/manşon birleşimleri."
+    "ve pompa/vana hatları görülebilir; muhtemel olarak konveyör bağlantı noktaları ve flanş/manşon "
+    "birleşimleri de değerlendirilebilir (kayıt doğrulaması gerekir)."
 )
 _APPEND_SEALING_WHERE = (
-    " Ek (otomatik somutlaştırma): hidrolik silindir, pompa gövdesi, vana birleşimi, pres veya "
-    "kesim/taşıma hattı, flanş veya kapak sızdırmazlık noktaları."
+    " Ek (otomatik somutlaştırma; düşük güven): tahmini olarak hidrolik silindir, pompa gövdesi, "
+    "vana birleşimi, pres veya kesim/taşıma hattı, flanş veya kapak sızdırmazlığı gibi noktalar "
+    "öngörülebilir (teknik teyit önerilir)."
 )
 
 
@@ -303,7 +305,7 @@ def _mock_panel_unified_payload(target: ResearchTarget | None = None) -> dict[st
                 + " bağlamında hat ve birleşim bileşenleri (web; düşük güven)"
             )
             base["sealing_need"] = (
-                "tahmini: olası — " + labels[0] + " hattında bağlantı sızdırmazlığı (düşük güven)"
+                "tahmini: muhtemel — " + labels[0] + " hattında bağlantı sızdırmazlığı (düşük güven)"
             )
             base["sealing_where"] = "tahmini: flanş/manşon veya hat birleşimi (düşük güven)"
         else:
@@ -311,7 +313,8 @@ def _mock_panel_unified_payload(target: ResearchTarget | None = None) -> dict[st
                 "tahmini: endüstriyel tesis veya üretim bileşenleri (web domain; düşük güven)"
             )
             base["sealing_need"] = (
-                "tahmini: bağlantı noktalarında conta ihtimali (web tek başına kanıt değil; düşük güven)"
+                "tahmini: bağlantı noktalarında conta ihtimali yüksek olabilir "
+                "(web tek başına kanıt değil; düşük güven)"
             )
             base["sealing_where"] = (
                 "tahmini: uygulama noktası teknik görüşmede netleşmeli (düşük güven)"
