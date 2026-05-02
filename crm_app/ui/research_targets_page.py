@@ -30,7 +30,11 @@ from PySide6.QtWidgets import (
 
 from crm_app.database.session import get_session
 from crm_app.models.research_target import ResearchTarget
-from crm_app.services.ai_analysis_service import run_ai_analysis_for_target
+from crm_app.services.ai_analysis_service import (
+    OpenAINotActiveError,
+    run_ai_analysis_for_target,
+    run_ai_suggest_for_dialog,
+)
 from crm_app.services.research_target_service import (
     basic_duplicate_check,
     create_research_target,
@@ -63,6 +67,8 @@ class ResearchTargetDialog(QDialog):
         self.setWindowTitle("Yeni Hedef" if target is None else "Hedefi Duzenle")
         self.setMinimumWidth(560)
         self._target_id = target.id if target else None
+        self._is_new = target is None
+        self._ai_suggest_result: dict[str, Any] | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 14, 14, 14)
@@ -129,6 +135,34 @@ class ResearchTargetDialog(QDialog):
         fl.addRow("Durum", self.status_input)
         fl.addRow("Notlar", self.notes_input)
 
+        self._ai_research_btn: QPushButton | None = None
+        self._ai_preview: QTextEdit | None = None
+        self._ai_apply_btn: QPushButton | None = None
+        if self._is_new:
+            ai_card = QFrame()
+            ai_card.setObjectName("DialogCard")
+            ai_l = QVBoxLayout(ai_card)
+            ai_l.setContentsMargins(18, 14, 18, 14)
+            ai_l.setSpacing(8)
+            ai_title = QLabel("AI destekli öneri")
+            ai_title.setObjectName("DialogSubtitle")
+            self._ai_research_btn = QPushButton("AI ile Araştır ve Analiz Et")
+            set_button_role(self._ai_research_btn, "secondary")
+            self._ai_research_btn.clicked.connect(self._on_ai_research_clicked)
+            self._ai_preview = QTextEdit()
+            self._ai_preview.setReadOnly(True)
+            self._ai_preview.setMinimumHeight(140)
+            self._ai_preview.setPlaceholderText("AI çalıştırıldığında önizleme burada görünür.")
+            self._ai_apply_btn = QPushButton("Forma Uygula")
+            set_button_role(self._ai_apply_btn, "secondary")
+            self._ai_apply_btn.setEnabled(False)
+            self._ai_apply_btn.clicked.connect(self._on_apply_ai_to_form)
+            ai_l.addWidget(ai_title)
+            ai_l.addWidget(self._ai_research_btn)
+            ai_l.addWidget(self._ai_preview, 1)
+            ai_l.addWidget(self._ai_apply_btn)
+            layout.addWidget(ai_card)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._on_save)
         buttons.rejected.connect(self.reject)
@@ -188,6 +222,133 @@ class ResearchTargetDialog(QDialog):
             "status": str(self.status_input.currentData() or "new"),
             "notes": self.notes_input.toPlainText().strip(),
         }
+
+    def get_ai_persistence_fields(self) -> dict[str, Any]:
+        """AI calistirildiysa kayit icin alanlar; aksi halde bos (NULL)."""
+        if not self._ai_suggest_result:
+            return {}
+        return {
+            "ai_analysis_json": json.dumps(self._ai_suggest_result, ensure_ascii=False),
+            "ai_analysis_version": str(self._ai_suggest_result.get("schema_version") or "ai_analysis_v1"),
+            "ai_model": "mock",
+            "ai_analysis_updated_at": datetime.utcnow(),
+        }
+
+    def _dialog_ai_context(self) -> dict[str, Any]:
+        return {
+            "name": self.name_input.text().strip(),
+            "website": self.website_input.text().strip(),
+            "linkedin_company_url": self.linkedin_input.text().strip(),
+            "country": self.country_input.text().strip(),
+            "city": self.city_input.text().strip(),
+        }
+
+    def _format_dialog_ai_preview(self, data: dict[str, Any]) -> str:
+        lines: list[str] = [
+            f"Özet: {data.get('summary', '-')}",
+            f"Sektör önerisi: {data.get('sector', '-')}",
+            f"Firma tipi: {data.get('company_type', '-')}",
+            f"Üretim yapısı: {data.get('production_structure', '-')}",
+            f"Ürün uyumu sinyalleri: {data.get('product_fit_signals', '-')}",
+            "",
+            "Hedef roller:",
+        ]
+        roles = data.get("target_roles")
+        if isinstance(roles, list) and roles:
+            for r in roles:
+                lines.append(f"  • {r}")
+        else:
+            lines.append("  • —")
+        lines += [
+            "",
+            f"Satış yaklaşımı: {data.get('sales_approach', '-')}",
+            "",
+            "Riskler:",
+        ]
+        risks = data.get("risks")
+        if isinstance(risks, list) and risks:
+            for r in risks:
+                lines.append(f"  • {r}")
+        else:
+            lines.append("  • —")
+        lines += ["", f"Not önerisi: {data.get('notes_suggestion', '-')}"]
+        return "\n".join(lines)
+
+    def _on_ai_research_clicked(self) -> None:
+        if not self._is_new:
+            return
+        answer = QMessageBox.question(
+            self,
+            "AI analizi",
+            "AI analizi çalıştırılacak. Devam edilsin mi?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._ai_suggest_result = run_ai_suggest_for_dialog(self._dialog_ai_context())
+        except OpenAINotActiveError as exc:
+            QMessageBox.warning(self, "AI analizi", str(exc))
+            return
+        except Exception as exc:
+            QMessageBox.critical(self, "AI analizi", f"İşlem başarısız:\n{exc}")
+            return
+        if self._ai_preview is not None:
+            self._ai_preview.setPlainText(self._format_dialog_ai_preview(self._ai_suggest_result))
+        if self._ai_apply_btn is not None:
+            self._ai_apply_btn.setEnabled(True)
+
+    def _on_apply_ai_to_form(self) -> None:
+        if not self._ai_suggest_result:
+            return
+        d = self._ai_suggest_result
+        filled: list[str] = []
+
+        def take_str(key: str) -> str:
+            v = d.get(key)
+            if v is None:
+                return ""
+            return str(v).strip()
+
+        if not self.sector_input.text().strip():
+            v = take_str("sector")
+            if v:
+                self.sector_input.setText(v)
+                filled.append("Sektör")
+        if not self.company_type_input.text().strip():
+            v = take_str("company_type")
+            if v:
+                self.company_type_input.setText(v)
+                filled.append("Firma tipi")
+        if not self.production_input.text().strip():
+            v = take_str("production_structure")
+            if v:
+                self.production_input.setText(v)
+                filled.append("Üretim yapısı")
+        if not self.signals_input.toPlainText().strip():
+            v = take_str("product_fit_signals")
+            if v:
+                self.signals_input.setPlainText(v)
+                filled.append("Ürün uyumu sinyalleri")
+        if not self.notes_input.toPlainText().strip():
+            v = take_str("notes_suggestion")
+            if v:
+                self.notes_input.setPlainText(v)
+                filled.append("Notlar")
+
+        if filled:
+            QMessageBox.information(
+                self,
+                "Forma Uygula",
+                "Doldurulan alanlar:\n• " + "\n• ".join(filled),
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "Forma Uygula",
+                "Uygun boş alan yoktu; mevcut alanlara dokunulmadı.",
+            )
 
 
 class ResearchTargetsPage(QWidget):
@@ -471,11 +632,48 @@ class ResearchTargetsPage(QWidget):
         tid = self._rows[row].id
         self.ai_save_analysis_btn.setEnabled(tid in self._ai_preview_by_target_id)
 
+    def _lines_from_ai_suggest_dialog_shape(self, data: dict[str, Any]) -> list[str]:
+        """Yeni Hedef dialogundan kaydedilen AI JSON (mock) ile uyumlu ozet."""
+        lines = [
+            f"Özet: {data.get('summary', '-')}",
+            f"Sektör önerisi: {data.get('sector', '-')}",
+            f"Firma tipi: {data.get('company_type', '-')}",
+            f"Üretim yapısı: {data.get('production_structure', '-')}",
+            f"Ürün uyumu sinyalleri: {data.get('product_fit_signals', '-')}",
+            f"Uygunluk notu: {data.get('suitability_comment', '-')}",
+            "",
+            "Hedef roller:",
+        ]
+        roles = data.get("target_roles")
+        if isinstance(roles, list) and roles:
+            for r in roles:
+                lines.append(f"  • {r}")
+        else:
+            lines.append("  • —")
+        lines += ["", f"Satış yaklaşımı: {data.get('sales_approach', '-')}", "", "Riskler:"]
+        risks = data.get("risks")
+        if isinstance(risks, list) and risks:
+            for r in risks:
+                lines.append(f"  • {r}")
+        else:
+            lines.append("  • —")
+        ns = (data.get("notes_suggestion") or "").strip()
+        disc = (data.get("disclaimer") or "").strip()
+        if ns or disc:
+            lines.append("")
+            if ns:
+                lines.append(f"Not önerisi: {ns}")
+            if disc:
+                lines.append(f"Uyarı: {disc}")
+        return lines
+
     def _lines_from_ai_display_dict(self, data: dict[str, Any], *, is_preview: bool) -> list[str]:
         lines: list[str] = []
         if is_preview:
             lines.append("Durum: Önizleme (kayıtlı değil)")
             lines.append("")
+        if "sales_approach" in data and "target_roles" in data:
+            return lines + self._lines_from_ai_suggest_dialog_shape(data)
         lines.append(f"Özet: {data.get('summary', '-')}")
         lines.append(f"Uygunluk: {data.get('suitability', '-')}")
         lines.append("")
@@ -549,8 +747,10 @@ class ResearchTargetsPage(QWidget):
             result = run_ai_analysis_for_target(t)
             self._ai_preview_by_target_id[t.id] = result
             self._populate_detail(row)
+        except OpenAINotActiveError as exc:
+            QMessageBox.warning(self, "AI analizi", str(exc))
         except Exception as exc:
-            QMessageBox.critical(self, "AI Analizi", f"Islem basarisiz:\n{exc}")
+            QMessageBox.critical(self, "AI analizi", f"İşlem başarısız:\n{exc}")
 
     def _save_ai_analysis(self) -> None:
         row = self._current_row_index()
@@ -1103,7 +1303,8 @@ class ResearchTargetsPage(QWidget):
         dialog = ResearchTargetDialog(parent=self)
         if not dialog.exec():
             return
-        create_research_target(dialog.get_data())
+        payload = {**dialog.get_data(), **dialog.get_ai_persistence_fields()}
+        create_research_target(payload)
         self.refresh_table()
 
     def _current_row_index(self) -> int | None:
