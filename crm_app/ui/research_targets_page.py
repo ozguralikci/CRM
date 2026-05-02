@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from crm_app.database.session import get_session
 from crm_app.models.research_target import ResearchTarget
+from crm_app.config.ai_settings import effective_openai_model, load_ai_settings
 from crm_app.services.ai_analysis_service import (
     OpenAINotActiveError,
     run_ai_analysis_for_target,
@@ -59,6 +60,34 @@ try:
 except ImportError:
     compute_fit_score = None  # type: ignore[misc, assignment]
     load_scoring_config = None  # type: ignore[misc, assignment]
+
+
+class _PanelAiAnalysisWorker(QThread):
+    """Panel «AI Analiz Et» — ağ çağrısı UI thread'ini bloklamaz."""
+
+    finished_ok = Signal(int, dict)
+    finished_err = Signal(int, str)
+
+    def __init__(self, target_id: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._tid = target_id
+
+    def run(self) -> None:
+        tid = self._tid
+        from crm_app.services.ai_analysis_service import format_panel_ai_user_message
+
+        session = get_session()
+        try:
+            t = session.get(ResearchTarget, tid)
+            if t is None:
+                self.finished_err.emit(tid, "Hedef kaydı bulunamadı.")
+                return
+            result = run_ai_analysis_for_target(t)
+            self.finished_ok.emit(tid, result)
+        except Exception as e:
+            self.finished_err.emit(tid, format_panel_ai_user_message(e))
+        finally:
+            session.close()
 
 
 class ResearchTargetDialog(QDialog):
@@ -370,6 +399,7 @@ class ResearchTargetsPage(QWidget):
         self._scoring_config: dict[str, Any] | None = None
         self._current_breakdown_for_dialog: dict[str, Any] | None = None
         self._ai_preview_by_target_id: dict[int, dict[str, Any]] = {}
+        self._panel_ai_worker: _PanelAiAnalysisWorker | None = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(8, 8, 8, 8)
@@ -667,6 +697,44 @@ class ResearchTargetsPage(QWidget):
                 lines.append(f"Uyarı: {disc}")
         return lines
 
+    def _lines_from_ai_unified_panel_shape(self, data: dict[str, Any]) -> list[str]:
+        """Panel + OpenAI birleşik şema (FAZ 3C-B)."""
+        lines = [
+            f"Özet: {data.get('summary', '-')}",
+            f"Sektör: {data.get('sector', '-')}",
+            f"Firma tipi: {data.get('company_type', '-')}",
+            f"Üretim yapısı: {data.get('production_structure', '-')}",
+            f"Ürün uyumu sinyalleri: {data.get('product_fit_signals', '-')}",
+            "",
+            "Ürün önerileri:",
+        ]
+        for p in data.get("products") or []:
+            lines.append(f"  • {p}")
+        if not (data.get("products") or []):
+            lines.append("  • —")
+        lines += ["", "Departmanlar / fonksiyonlar:"]
+        for d in data.get("departments") or []:
+            lines.append(f"  • {d}")
+        if not (data.get("departments") or []):
+            lines.append("  • —")
+        lines += [
+            "",
+            f"Satış stratejisi: {data.get('sales_strategy', '-')}",
+            "",
+            "Riskler:",
+        ]
+        for r in data.get("risks") or []:
+            lines.append(f"  • {r}")
+        if not (data.get("risks") or []):
+            lines.append("  • —")
+        lines += [
+            "",
+            f"İlk mesaj önerisi: {data.get('first_message', '-')}",
+            "",
+            f"Not önerisi: {data.get('notes_suggestion', '-')}",
+        ]
+        return lines
+
     def _lines_from_ai_display_dict(self, data: dict[str, Any], *, is_preview: bool) -> list[str]:
         lines: list[str] = []
         if is_preview:
@@ -674,6 +742,13 @@ class ResearchTargetsPage(QWidget):
             lines.append("")
         if "sales_approach" in data and "target_roles" in data:
             return lines + self._lines_from_ai_suggest_dialog_shape(data)
+        if (
+            "sales_strategy" in data
+            and "notes_suggestion" in data
+            and "target_roles" not in data
+            and "suitability" not in data
+        ):
+            return lines + self._lines_from_ai_unified_panel_shape(data)
         lines.append(f"Özet: {data.get('summary', '-')}")
         lines.append(f"Uygunluk: {data.get('suitability', '-')}")
         lines.append("")
@@ -734,23 +809,52 @@ class ResearchTargetsPage(QWidget):
         if row is None or row < 0 or row >= len(self._rows):
             return
         t = self._rows[row]
+        msg = "AI analizi çalıştırılacak. Devam edilsin mi?"
+        if load_ai_settings().provider == "openai":
+            msg += (
+                "\n\nBu işlem harici OpenAI servisine veri gönderebilir "
+                "ve ücret oluşturabilir."
+            )
         answer = QMessageBox.question(
             self,
-            "AI Analizi",
-            "AI analizi çalıştırılacak. Devam edilsin mi?",
+            "AI analizi",
+            msg,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        try:
-            result = run_ai_analysis_for_target(t)
-            self._ai_preview_by_target_id[t.id] = result
-            self._populate_detail(row)
-        except OpenAINotActiveError as exc:
-            QMessageBox.warning(self, "AI analizi", str(exc))
-        except Exception as exc:
-            QMessageBox.critical(self, "AI analizi", f"İşlem başarısız:\n{exc}")
+        if self._panel_ai_worker is not None and self._panel_ai_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "AI analizi",
+                "Önceki analiz tamamlanana kadar bekleyin.",
+            )
+            return
+        self._panel_ai_worker = _PanelAiAnalysisWorker(t.id, self)
+        self._panel_ai_worker.finished_ok.connect(self._on_panel_ai_worker_ok)
+        self._panel_ai_worker.finished_err.connect(self._on_panel_ai_worker_err)
+        self._panel_ai_worker.finished.connect(self._on_panel_ai_thread_finished)
+        self.ai_analyze_btn.setEnabled(False)
+        self._panel_ai_worker.start()
+
+    def _on_panel_ai_worker_ok(self, tid: int, result: dict[str, Any]) -> None:
+        self._ai_preview_by_target_id[tid] = result
+        ridx = self._current_row_index()
+        if ridx is not None and 0 <= ridx < len(self._rows) and self._rows[ridx].id == tid:
+            self._populate_detail(ridx)
+        self._sync_ai_buttons()
+
+    def _on_panel_ai_worker_err(self, tid: int, message: str) -> None:
+        _ = tid
+        QMessageBox.warning(self, "AI analizi", message)
+        self._sync_ai_buttons()
+
+    def _on_panel_ai_thread_finished(self) -> None:
+        if self._panel_ai_worker is not None:
+            self._panel_ai_worker.deleteLater()
+            self._panel_ai_worker = None
+        self._sync_ai_buttons()
 
     def _save_ai_analysis(self) -> None:
         row = self._current_row_index()
@@ -763,7 +867,9 @@ class ResearchTargetsPage(QWidget):
             return
         session = get_session()
         try:
-            update_research_target_ai_analysis(session, tid, preview, model_name="mock")
+            s = load_ai_settings()
+            model_name = effective_openai_model(s) if s.provider == "openai" else "mock"
+            update_research_target_ai_analysis(session, tid, preview, model_name=model_name)
         except Exception as exc:
             QMessageBox.critical(self, "AI Analizi", f"Kaydedilemedi:\n{exc}")
             return

@@ -98,6 +98,12 @@ def _handle_unexpected_exception(
 
 def main() -> None:
     configure_logging()
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(Path(__file__).resolve().parent / ".env")
+    except ImportError:
+        pass
     sys.excepthook = _handle_unexpected_exception
     active_db = resolve_active_db_path()
     LOGGER.info("ACTIVE DATABASE: %s", active_db)

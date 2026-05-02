@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+DEFAULT_OPENAI_MODEL = "gpt-4.1-mini"
+
 
 def _parse_positive_int(value: str | None, *, default: int) -> int:
     if value is None or not str(value).strip():
@@ -45,6 +47,12 @@ class AiSettings:
     openai_max_prompt_chars: int
 
 
+def effective_openai_model(settings: AiSettings) -> str:
+    """OPENAI_MODEL boşsa varsayılan mini model."""
+    m = (settings.openai_model or "").strip()
+    return m or DEFAULT_OPENAI_MODEL
+
+
 def load_ai_settings() -> AiSettings:
     provider = _normalize_provider(os.getenv("AI_PROVIDER"))
 
@@ -66,5 +74,5 @@ def load_ai_settings() -> AiSettings:
         openai_model=openai_model,
         openai_timeout_sec=_parse_positive_float(os.getenv("OPENAI_TIMEOUT_SEC"), default=45.0),
         openai_max_output_tokens=_parse_positive_int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS"), default=1200),
-        openai_max_prompt_chars=_parse_positive_int(os.getenv("OPENAI_MAX_PROMPT_CHARS"), default=4000),
+        openai_max_prompt_chars=_parse_positive_int(os.getenv("OPENAI_MAX_PROMPT_CHARS"), default=2000),
     )

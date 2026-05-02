@@ -3,3 +3,5 @@ SQLAlchemy
 openpyxl
 PyInstaller
 PyYAML
+openai>=1.40.0
+python-dotenv>=1.0.0
