@@ -1,4 +1,4 @@
-"""Araştırma hedefi için AI promptları (FAZ 3C-B / 3D / web tabanlı çıkarım)."""
+"""Araştırma hedefi için AI promptları (FAZ 3C-B / 3D / 3F endüstriyel derinlik)."""
 
 from __future__ import annotations
 
@@ -47,25 +47,35 @@ def build_research_target_ai_messages(target: ResearchTarget, max_chars: int = 2
     User bloğu toplam uzunluğu max_chars'ı aşmamalı.
     """
     system = (
-        "Sen Sürlas (kauçuk conta, O-ring, teknik kauçuk parça, sızdırmazlık) için "
-        "endüstriyel B2B satış analisti olarak çalışıyorsun. "
-        "Genel pazarlama cümlesi yazma; teknik ve satış dilinde, somut öneriler üret. "
-        "Kanıt zayıfsa alanı boş veya yalnızca 'belirsiz' bırakma: "
-        "web adresi, firma adı veya kayıtlı metin ipucu veriyorsa düşük güvenli teknik tahmin yap; "
-        "tahminleri 'tahmini:' ile başlat ve güven seviyesini kısaca belirt. "
-        "Kesin satış garantisi veya yasal iddia yok; uydurma somut sipariş/figür yok. "
-        "Çıktı yalnızca tek bir JSON nesnesi; şemadaki tüm anahtarlar zorunlu; markdown yok. "
-        "decision yalnızca: TAKİP ET, BEKLET, ELE, belirsiz. "
-        "fit_score_percent 0–100 tamsayı; kanıt zayıfsa düşük skor, karar alanını gerekçeyle doldur. "
-        "WEB SİTESİ DOLU İSE: sector alanını boş veya yalnızca 'belirsiz' bırakma — "
-        "domain ve genel sektör bilgisiyle tahmini sektör yaz. "
-        "Üretim / montaj olasılığı yüksek görünüyorsa technical_usage alanında "
-        "yalnızca 'belirsiz' yazma; makine, hat, bağlantı veya proses düzeyinde tahmini kullanım yaz."
+        "Rollerin: (1) mekanik bakım mühendisi (2) üretim mühendisi (3) endüstriyel teknik satış mühendisi. "
+        "Sen Sürlas ürünleri (kauçuk conta, O-ring, hidrolik/statik conta, özel teknik kauçuk, sızdırmazlık) "
+        "için B2B analizi üretiyorsun. "
+        "Sektör veya tesis tipi tahmin edildiyse, o ortamda sık görülen makine ve prosesleri ismen düşün: "
+        "ör. hidrolik pres ve silindirler, kesim hatları, konveyör tambur/bant bağlantıları, pompaj istasyonları, "
+        "tozlu veya yüksek sıcaklık hatları, vana ve aktüatör birleşimleri, bakım döngüsü ve aşınma noktaları. "
+        "KESİNLİKLE KULLANMA veya bu ifadelerle geçme (anlamsız genelleme): "
+        "'proses ekipmanları', 'makine bağlantıları', 'endüstriyel hatlar', 'endüstriyel sistemler', "
+        "'endüstriyel hat', 'genel bağlantılar'. "
+        "Bunun yerine somut adlar kullan: örn. hidrolik pres silindir strok contası, pompa gövdesi sızdırmazlığı, "
+        "vana gövdesi–aktüatör birleşimi, konveyör istasyonu kauçuk tampon/conta, flanş/manşon sızdırmazlığı. "
+        "technical_usage ZORUNLU: en az iki somut makine veya hat türü; çalışma koşulları (sıcaklık, toz, kimyasal) "
+        "ve bakım / aşınma riski cümleleri; hepsi mümkünse 'tahmini:' ile düşük güven etiketi. "
+        "sealing_where ZORUNLU: metinde açıkça en az iki somut nokta geçsin "
+        "(hidrolik silindir, pompa, vana, pres, kesim hattı, taşıma/konveyör hattı, kapak/flanş/manşon vb.). "
+        "surlas_fit_products: teknik ürün adları (O-ring, hidrolik conta, düz/statik conta, özel teknik kauçuk parça); "
+        "gerekirse yüksek sıcaklığa veya kimyasala dayanım, titreşim sönümleme gibi gereksinimleri ayrı öğe olarak yaz. "
+        "sales_strategy: önce teknik ihtiyaç keşfi; numune/ölçü/teknik resim talebi; bakım ve tedarik sürekliliği; "
+        "arıza ve duruş azaltma vurgusu; fiyat öncesi değer önerisi. "
+        "Kanıt zayıfsa alanı boş bırakma: web, firma adı veya kayıt metni ipucu veriyorsa düşük güvenli tahmin yaz. "
+        "Kesin satış garantisi veya yasal iddia yok; sipariş no, müşteri adı, rakam uydurma. "
+        "Çıktı yalnızca tek JSON nesnesi; şemadaki tüm anahtarlar zorunlu; markdown yok. "
+        "decision: TAKİP ET, BEKLET, ELE, belirsiz. fit_score_percent 0–100 tamsayı. "
+        "WEB SİTESİ DOLU İSE: sector yalnızca 'belirsiz' olamaz; domain ve bilinen sektör bilgisiyle tahmini sektör yaz."
     )
 
     parts: list[str] = [
-        "Kaydı endüstriyel kullanım (makine/proses), sızdırmazlık, Sürlas ürün uyumu, "
-        "satış zorluğu ve portföy kararı açısından analiz et. Özet kısa ve teknik olsun.",
+        "Kaydı makine parkı, proses hatları, sızdırmazlık noktaları ve Sürlas ürün eşlemesi üzerinden analiz et. "
+        "Özet: kısa, teknik, somut fiil ve ekipman adları içersin.",
         "",
         f"Firma adı: {_clip(target.name or '', 400)}",
         f"Web sitesi: {_clip(target.website or '', 300)}",
@@ -77,22 +87,26 @@ def build_research_target_ai_messages(target: ResearchTarget, max_chars: int = 2
         f"Üretim yapısı: {_clip(target.production_structure or '', 200)}",
         f"Ürün uyumu sinyalleri: {_clip(target.product_fit_signals or '', 600)}",
         f"Notlar: {_clip(target.notes or '', 600)}",
+        "",
+        "Alan kuralları (metin içinde yerine getir):",
+        "- technical_usage: somut makine/hat + çalışma ortamı + bakım-aşınma; yasaklı genel laflardan kaçın.",
+        "- sealing_where: pompa/vana/pres/konveyör/flanş gibi en az iki somut sızdırmazlık yeri.",
+        "- surlas_fit_products: Sürlas tipi ürünler, teknik sıfatlar mümkünse ayrı liste öğesi.",
+        "- sales_strategy: keşif → numune/resim → süreklilik/arıza azaltma sırası.",
     ]
 
     if (target.website or "").strip():
         hits = _keyword_hint_lines(target.website or "", target.name or "")
         parts.append("")
         parts.append(
-            "WEB SİTESİ MEVCUT: Domain ve yukarıdaki metinlerden endüstriyel sektör, "
-            "üretim tipi ve olası sızdırmazlık senaryolarını düşük güvenle çıkar; "
-            "sector ve technical_usage için anlamlı tahmin yaz (yalnızca 'belirsiz' ile geçme)."
+            "WEB SİTESİ MEVCUT: Domain ve metinlerden sektör ve üretim tipi çıkar; "
+            "technical_usage ve sealing_where alanlarını web ipucu ile zenginleştir."
         )
         if hits:
             parts.append(
-                "Otomatik anahtar sözcük ipuçları (model bunları dikkate alsın): "
+                "Anahtar sözcük ipuçları: "
                 + ", ".join(hits)
-                + " → sektör, production_structure, sealing_need / sealing_where ve technical_usage "
-                "ile hizala; her tahmini 'tahmini:' ile etiketle."
+                + " — tahminleri bu ipuçlarıyla hizala; 'tahmini:' kullan."
             )
 
     user_body = "\n".join(parts).strip()

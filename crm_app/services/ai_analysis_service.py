@@ -164,6 +164,43 @@ def _postprocess_website_inference(target: ResearchTarget, out: dict[str, Any]) 
     return o
 
 
+# FAZ 3F: Çok genel ifadeler tespit edilirse metne yalnızca ekleme (silme yok).
+_TECH_GENERIC_FOR_APPEND: tuple[str, ...] = (
+    "proses ekipmanları",
+    "makine bağlantıları",
+    "endüstriyel hatlar",
+    "endüstriyel hat",
+    "endüstriyel sistemler",
+)
+_APPEND_SIGNATURE = "Ek (otomatik somutlaştırma"
+_APPEND_TECH_USAGE = (
+    " Ek (otomatik somutlaştırma; düşük güven): tahmini olarak hidrolik sistemler, pres makineleri "
+    "ve pompa/vana hatları; ayrıca konveyör bağlantı noktaları ve flanş/manşon birleşimleri."
+)
+_APPEND_SEALING_WHERE = (
+    " Ek (otomatik somutlaştırma): hidrolik silindir, pompa gövdesi, vana birleşimi, pres veya "
+    "kesim/taşıma hattı, flanş veya kapak sızdırmazlık noktaları."
+)
+
+
+def _append_concrete_usage_hints(out: dict[str, Any]) -> dict[str, Any]:
+    """Model çıktısı belirli genel kalıplar içeriyorsa somut örnek cümlesi ekle (orijinal metin korunur)."""
+    o = dict(out)
+    tu = o.get("technical_usage") or ""
+    if _APPEND_SIGNATURE not in tu:
+        tl = tu.lower()
+        if any(p in tl for p in _TECH_GENERIC_FOR_APPEND):
+            o["technical_usage"] = tu.rstrip() + _APPEND_TECH_USAGE
+
+    sw = o.get("sealing_where") or ""
+    if _APPEND_SIGNATURE not in sw:
+        sl = sw.lower()
+        if any(p in sl for p in _TECH_GENERIC_FOR_APPEND):
+            o["sealing_where"] = sw.rstrip() + _APPEND_SEALING_WHERE
+
+    return o
+
+
 def validate_and_normalize_panel_ai_dict(raw: dict[str, Any]) -> dict[str, Any]:
     """Panel/OpenAI birleşik şema — DB öncesi doğrulama."""
     if not isinstance(raw, dict):
@@ -315,11 +352,13 @@ def run_ai_analysis_for_target(target: ResearchTarget) -> dict[str, Any]:
     settings = load_ai_settings()
     if settings.provider == "mock":
         out = validate_and_normalize_panel_ai_dict(_mock_panel_unified_payload(target))
-        return _postprocess_website_inference(target, out)
+        out = _postprocess_website_inference(target, out)
+        return _append_concrete_usage_hints(out)
 
     if settings.provider != "openai":
         out = validate_and_normalize_panel_ai_dict(_mock_panel_unified_payload(target))
-        return _postprocess_website_inference(target, out)
+        out = _postprocess_website_inference(target, out)
+        return _append_concrete_usage_hints(out)
 
     if not settings.openai_api_key:
         raise OpenAIMissingApiKeyError(
@@ -336,4 +375,5 @@ def run_ai_analysis_for_target(target: ResearchTarget) -> dict[str, Any]:
         max_output_tokens=settings.openai_max_output_tokens,
     )
     out = validate_and_normalize_panel_ai_dict(raw)
-    return _postprocess_website_inference(target, out)
+    out = _postprocess_website_inference(target, out)
+    return _append_concrete_usage_hints(out)
