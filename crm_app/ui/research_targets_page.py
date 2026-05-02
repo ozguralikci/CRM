@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -76,6 +76,23 @@ def _fmt_truncate(text: str, max_len: int = 120) -> str:
     return t[: max_len - 1] + "…"
 
 
+def _priority_chip_stylesheet(band: str) -> str:
+    """QLabel chip QSS: Zayıf kırmızı, Orta sarı, İyi yeşil, Sıcak güçlü vurgu."""
+    base = "padding: 5px 12px; border-radius: 8px; font-weight: 600; font-size: 12px;"
+    if band == "Zayıf":
+        return f"{base} background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca;"
+    if band == "Orta":
+        return f"{base} background-color: #fef9c3; color: #854d0e; border: 1px solid #facc15;"
+    if band == "İyi":
+        return f"{base} background-color: #dcfce7; color: #166534; border: 1px solid #4ade80;"
+    if band == "Sıcak":
+        return (
+            f"{base} background-color: #bbf7d0; color: #052e16; border: 2px solid #15803d; "
+            "font-weight: 700; font-size: 13px;"
+        )
+    return f"{base} background-color: #f1f5f9; color: #475569; border: 1px solid #e2e8f0;"
+
+
 def _impact_suffix_for_risk(risk: str) -> str:
     low = risk.lower()
     if "fiyat" in low or "rekabet" in low:
@@ -127,7 +144,7 @@ def _build_oneri_line(data: dict[str, Any]) -> str:
         method = "kayıt sinyallerine göre numune veya teknik soru seti hazırla"
 
     mid = f"{role_name} rolünü doğrula ve hedefle"
-    line = f"{fire}{raw_dec or '—'} → {mid} → {method}"
+    line = f"{fire}{raw_dec or 'Belirsiz'} → {mid} → {method}"
     return _fmt_truncate(line, 120)
 
 
@@ -303,6 +320,14 @@ class ResearchTargetDialog(QDialog):
             ai_l.setSpacing(8)
             ai_title = QLabel("AI destekli öneri (mock)")
             ai_title.setObjectName("DialogSubtitle")
+            ai_help = QLabel(
+                "Bu sekme, girdiğiniz firma adı ve web gibi temel alanlara göre "
+                "sektör, üretim yapısı, ürün uyumu sinyali ve satışa dair kısa öneriler üretir. "
+                "Sonuçlar otomatik doğrulanmaz; «Forma Uygula» ile yalnızca boş alanlara yazılır. "
+                "Kayıt sırasında AI çıktısı JSON olarak hedefe eklenir (OpenAI kapalıyken yerel mock)."
+            )
+            ai_help.setWordWrap(True)
+            ai_help.setStyleSheet("color: #64748b; font-size: 12px;")
             self._ai_research_btn = QPushButton("AI ile Araştır ve Analiz Et")
             set_button_role(self._ai_research_btn, "secondary")
             self._ai_research_btn.clicked.connect(self._on_ai_research_clicked)
@@ -315,6 +340,7 @@ class ResearchTargetDialog(QDialog):
             self._ai_apply_btn.setEnabled(False)
             self._ai_apply_btn.clicked.connect(self._on_apply_ai_to_form)
             ai_l.addWidget(ai_title)
+            ai_l.addWidget(ai_help)
             ai_l.addWidget(self._ai_research_btn)
             ai_l.addWidget(self._ai_preview, 1)
             ai_l.addWidget(self._ai_apply_btn)
@@ -650,7 +676,10 @@ class ResearchTargetsPage(QWidget):
         self._detail_empty = QWidget()
         _de_l = QVBoxLayout(self._detail_empty)
         _de_l.setContentsMargins(0, 0, 0, 0)
-        self._detail_empty_label = QLabel("Tablodan bir hedef seçin.")
+        self._detail_empty_label = QLabel(
+            "Satış kararı için önce tablodan bir satır seçin.\n\n"
+            "Liste boşsa: sağ üstten «Yeni Hedef Ekle» ile kayıt açın."
+        )
         self._detail_empty_label.setWordWrap(True)
         self._detail_empty_label.setObjectName("DialogSubtitle")
         _de_l.addWidget(self._detail_empty_label)
@@ -663,45 +692,93 @@ class ResearchTargetsPage(QWidget):
         oz_scroll.setFrameShape(QFrame.Shape.NoFrame)
         oz_inner = QWidget()
         oz_l = QVBoxLayout(oz_inner)
-        oz_l.setSpacing(10)
+        oz_l.setSpacing(12)
         self._ozet_kayit_lbl = QLabel()
         self._ozet_kayit_lbl.setWordWrap(True)
         self._ozet_kayit_lbl.setObjectName("DialogSubtitle")
         self._ozet_kayit_lbl.setTextFormat(Qt.TextFormat.RichText)
-        row_meta = QHBoxLayout()
-        self._ozet_decision_lbl = QLabel()
-        self._ozet_decision_lbl.setWordWrap(True)
-        self._ozet_decision_lbl.setTextFormat(Qt.TextFormat.RichText)
-        self._ozet_priority_lbl = QLabel()
-        self._ozet_priority_lbl.setWordWrap(True)
-        self._ozet_priority_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._ozet_kayit_lbl.setStyleSheet("color: #64748b; font-size: 12px;")
+
+        self._ozet_decision_big = QLabel()
+        self._ozet_decision_big.setWordWrap(True)
+        _df = QFont(self._ozet_decision_big.font())
+        _df.setPointSize(max(_df.pointSize() + 6, 18))
+        _df.setBold(True)
+        self._ozet_decision_big.setFont(_df)
+        self._ozet_decision_big.setStyleSheet("color: #0f172a;")
+
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(10)
+        self._ozet_priority_chip = QLabel()
+        self._ozet_priority_chip.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+        )
+        self._ozet_skor_caption = QLabel()
+        self._ozet_skor_caption.setWordWrap(True)
+        self._ozet_skor_caption.setStyleSheet("color: #64748b; font-size: 12px;")
+        self._ozet_skor_caption.setTextFormat(Qt.TextFormat.RichText)
+        chip_row.addWidget(self._ozet_priority_chip, 0)
+        chip_row.addStretch(1)
+        chip_row.addWidget(self._ozet_skor_caption, 0)
+
         self._ozet_fit_ai_lbl = QLabel()
         self._ozet_fit_ai_lbl.setWordWrap(True)
+        self._ozet_fit_ai_lbl.setStyleSheet("font-size: 13px;")
+        self._ozet_fit_ai_lbl.setTextFormat(Qt.TextFormat.RichText)
         self._ozet_diff_lbl = QLabel()
         self._ozet_diff_lbl.setWordWrap(True)
-        row_meta.addWidget(self._ozet_decision_lbl, 1)
-        row_meta.addWidget(self._ozet_priority_lbl, 0)
-        oz_l.addWidget(self._ozet_kayit_lbl)
-        oz_l.addLayout(row_meta)
-        oz_l.addWidget(self._ozet_fit_ai_lbl)
-        oz_l.addWidget(self._ozet_diff_lbl)
+        self._ozet_diff_lbl.setStyleSheet("font-size: 13px; color: #334155;")
+        self._ozet_diff_lbl.setTextFormat(Qt.TextFormat.RichText)
 
-        gb_oneri = QGroupBox("Öneri")
-        ol = QVBoxLayout(gb_oneri)
+        self._ozet_oneri_frame = QFrame()
+        self._ozet_oneri_frame.setObjectName("ResearchOneriCard")
+        self._ozet_oneri_frame.setStyleSheet(
+            "QFrame#ResearchOneriCard { background-color: #eff6ff; border: 2px solid #2563eb; "
+            "border-radius: 10px; }"
+        )
+        ofl = QVBoxLayout(self._ozet_oneri_frame)
+        ofl.setContentsMargins(12, 10, 12, 10)
+        ofl.setSpacing(6)
+        _ot = QLabel("Öneri")
+        _ot.setStyleSheet("font-weight: 700; color: #1e40af; font-size: 12px;")
         self._ozet_oneri_lbl = QLabel()
         self._ozet_oneri_lbl.setWordWrap(True)
-        ol.addWidget(self._ozet_oneri_lbl)
-        gb_neden = QGroupBox("Neden (etki)")
-        nl = QVBoxLayout(gb_neden)
+        self._ozet_oneri_lbl.setStyleSheet("font-size: 13px; color: #0f172a;")
+        ofl.addWidget(_ot)
+        ofl.addWidget(self._ozet_oneri_lbl)
+
+        self._ozet_neden_frame = QFrame()
+        self._ozet_neden_frame.setObjectName("ResearchNedenCard")
+        self._ozet_neden_frame.setStyleSheet(
+            "QFrame#ResearchNedenCard { background-color: #f8fafc; border-left: 4px solid #64748b; "
+            "border-radius: 6px; }"
+        )
+        nfl = QVBoxLayout(self._ozet_neden_frame)
+        nfl.setContentsMargins(10, 8, 10, 8)
+        nfl.setSpacing(4)
+        _nt = QLabel("Neden (etki)")
+        _nt.setStyleSheet("font-weight: 600; color: #475569; font-size: 11px;")
         self._ozet_neden_lbl = QLabel()
         self._ozet_neden_lbl.setWordWrap(True)
-        nl.addWidget(self._ozet_neden_lbl)
+        self._ozet_neden_lbl.setStyleSheet("font-size: 13px; color: #334155;")
+        nfl.addWidget(_nt)
+        nfl.addWidget(self._ozet_neden_lbl)
+
+        oz_l.addWidget(self._ozet_decision_big)
+        oz_l.addLayout(chip_row)
+        oz_l.addWidget(self._ozet_fit_ai_lbl)
+        oz_l.addWidget(self._ozet_diff_lbl)
+        oz_l.addWidget(self._ozet_kayit_lbl)
+        oz_l.addWidget(self._ozet_oneri_frame)
+        oz_l.addWidget(self._ozet_neden_frame)
         self._ozet_empty_hint = QLabel()
         self._ozet_empty_hint.setWordWrap(True)
         self._ozet_empty_hint.setObjectName("DialogSubtitle")
         self._ozet_empty_hint.setVisible(False)
-        oz_l.addWidget(gb_oneri)
-        oz_l.addWidget(gb_neden)
+        self._ozet_empty_hint.setStyleSheet(
+            "background-color: #fffbeb; border: 1px dashed #f59e0b; border-radius: 8px; "
+            "padding: 10px; color: #92400e;"
+        )
         oz_l.addWidget(self._ozet_empty_hint)
         gb_skor = QGroupBox("Skor özeti (kurallar)")
         skl = QVBoxLayout(gb_skor)
@@ -850,8 +927,9 @@ class ResearchTargetsPage(QWidget):
         if not self._rows:
             set_table_empty_state(
                 self.table,
-                "Hedef firma eklemek icin sag ustteki Yeni Hedef Ekle dugmesini kullanin.\n"
-                "Filtreler aktifse sonuclari daraltmis olabilirsiniz; filtreleri temizleyip yenileyin.",
+                "Şu an listede hedef yok.\n\n"
+                "→ Sağ üstten «Yeni Hedef Ekle» ile ilk kaydı oluşturun\n"
+                "→ Filtreler açıksa temizleyip «Yenile» ile tümünü görün",
                 action_label="Yeni Hedef Ekle",
                 action_handler=self.add_target,
             )
@@ -1723,9 +1801,14 @@ class ResearchTargetsPage(QWidget):
             v = (data.get(key) or "").strip()
             return _fmt_truncate(v, 320) if v else "—"
 
-        self._tech_usage_body.setText(blk("technical_usage"))
-        self._tech_seal_body.setText(blk("sealing_need"))
-        self._tech_where_body.setText(blk("sealing_where"))
+        u, s, w = blk("technical_usage"), blk("sealing_need"), blk("sealing_where")
+        hint = ""
+        if u == "—" and s == "—" and w == "—":
+            hint = "\n\n→ «AI Analiz Et» ile bu alanlar dolar (birleşik analiz şeması)."
+        self._tech_usage_body.setText(u + hint)
+        self._tech_seal_body.setText(s)
+        self._tech_where_body.setText(w)
+
 
     def _fill_sales_firsat_tab(self, t: ResearchTarget, data: dict[str, Any]) -> None:
         blocks: list[str] = []
@@ -1805,31 +1888,49 @@ class ResearchTargetsPage(QWidget):
         self._ozet_kayit_lbl.setText("<br/>".join(lines_html))
 
         dec_raw = (data.get("decision") or "").strip()
-        self._ozet_decision_lbl.setText(f"<b>Karar</b> {dec_raw or '—'}")
-        self._ozet_priority_lbl.setText(f"Öncelik: <b>{band}</b><br/>Skor: {ks}")
+        if not dec_raw or dec_raw == "—":
+            dec_display = "Belirsiz"
+        else:
+            dec_display = dec_raw
+        self._ozet_decision_big.setText(f"Karar: {dec_display}")
+
+        self._ozet_priority_chip.setText(band)
+        self._ozet_priority_chip.setStyleSheet(_priority_chip_stylesheet(band))
+        self._ozet_skor_caption.setText(f"Skor (kurallar): <b>{ks}</b> / 100")
+        self._ozet_skor_caption.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
+        )
 
         fp = data.get("fit_score_percent")
         if fp is not None and str(fp).strip() != "":
-            self._ozet_fit_ai_lbl.setText(f"AI uygunluk (tahmini %): {fp}")
-            self._ozet_fit_ai_lbl.setVisible(True)
+            self._ozet_fit_ai_lbl.setText(f"<b>Uygunluk (AI tahmini)</b> %{fp}")
         else:
-            self._ozet_fit_ai_lbl.clear()
-            self._ozet_fit_ai_lbl.setVisible(False)
+            self._ozet_fit_ai_lbl.setText(f"<b>Uygunluk (kayıtlı skor)</b> %{ks}")
+        self._ozet_fit_ai_lbl.setVisible(True)
 
         sd_short = (data.get("sales_difficulty") or "").strip()
-        self._ozet_diff_lbl.setText(
-            f"Satış zorluğu: {_fmt_truncate(sd_short, 200)}" if sd_short else "Satış zorluğu: —"
-        )
+        if sd_short:
+            self._ozet_diff_lbl.setText(
+                f"<b>Satış zorluğu</b><br/>{_fmt_truncate(sd_short, 220)}"
+            )
+        else:
+            self._ozet_diff_lbl.setText(
+                "<b>Satış zorluğu</b><br/>"
+                "Henüz net değil — «AI Analiz Et» veya sektör + ürün sinyali ile doldurun."
+            )
+        self._ozet_diff_lbl.setTextFormat(Qt.TextFormat.RichText)
 
         oneri = _build_oneri_line(data) if data else ""
         if not oneri:
             role = "Satınalma/teknik sorumlu"
             if (t.sector or "").strip():
                 oneri = _fmt_truncate(
-                    f"— → {role} hedefle → {t.sector} için teknik netleştirme soruları hazırla", 120
+                    f"Belirsiz → {role} hedefle → {t.sector} için teknik netleştirme soruları hazırla", 120
                 )
             else:
-                oneri = "— → Web ve ürün sinyali ekle → ardından AI analizi ve skor"
+                oneri = (
+                    "Belirsiz → Web ve ürün sinyali ekle → ardından «AI Analiz Et» ve «Skoru Kaydet»"
+                )
 
         self._ozet_oneri_lbl.setText(oneri)
 
@@ -1838,16 +1939,19 @@ class ResearchTargetsPage(QWidget):
             comment, _sugg = self._build_fit_comment(t)
             neden = _fmt_truncate(comment, 120) if comment else ""
 
-        self._ozet_neden_lbl.setText(neden or "—")
+        self._ozet_neden_lbl.setText(
+            neden
+            or "Etki henüz çıkmıyor — web ve ürün sinyali ekleyin; ardından AI ile risk/etki satırı dolsun."
+        )
 
         sparse = self._ozet_sparse_record(t) or not data
         self._ozet_empty_hint.setVisible(bool(sparse))
         if sparse:
             self._ozet_empty_hint.setText(
-                "Veri eksik:\n"
-                "→ Web ekle\n"
-                "→ Ürün sinyali gir\n"
-                "→ AI analizi çalıştır"
+                "Bu kayıtta karar netliği için veri eksik.\n\n"
+                "→ «Düzenle» ile web ve ürün sinyali ekleyin\n"
+                "→ «AI Analiz Et» ile karar / öneri üretin\n"
+                "→ «Skoru Kaydet» ile önceliği kurallara göre sabitleyin"
             )
         else:
             self._ozet_empty_hint.clear()
