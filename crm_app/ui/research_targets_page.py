@@ -77,20 +77,19 @@ def _fmt_truncate(text: str, max_len: int = 120) -> str:
 
 
 def _priority_chip_stylesheet(band: str) -> str:
-    """QLabel chip QSS: Zayıf kırmızı, Orta sarı, İyi yeşil, Sıcak güçlü vurgu."""
-    base = "padding: 5px 12px; border-radius: 8px; font-weight: 600; font-size: 12px;"
+    """QLabel chip QSS: öncelik bantları — güçlendirilmiş kontrast."""
+    base = "padding: 6px 14px; border-radius: 8px; font-size: 12px;"
     if band == "Zayıf":
-        return f"{base} background-color: #fee2e2; color: #991b1b; border: 1px solid #fecaca;"
+        return f"{base} background-color: #FEE2E2; color: #B91C1C; font-weight: 600;"
     if band == "Orta":
-        return f"{base} background-color: #fef9c3; color: #854d0e; border: 1px solid #facc15;"
+        return f"{base} background-color: #FEF3C7; color: #92400E; font-weight: 600;"
     if band == "İyi":
-        return f"{base} background-color: #dcfce7; color: #166534; border: 1px solid #4ade80;"
+        return f"{base} background-color: #DCFCE7; color: #166534; font-weight: 600;"
     if band == "Sıcak":
         return (
-            f"{base} background-color: #bbf7d0; color: #052e16; border: 2px solid #15803d; "
-            "font-weight: 700; font-size: 13px;"
+            f"{base} background-color: #DBEAFE; color: #1D4ED8; font-weight: 700; font-size: 12px;"
         )
-    return f"{base} background-color: #f1f5f9; color: #475569; border: 1px solid #e2e8f0;"
+    return f"{base} background-color: #f1f5f9; color: #475569; font-weight: 600;"
 
 
 def _impact_suffix_for_risk(risk: str) -> str:
@@ -144,7 +143,10 @@ def _build_oneri_line(data: dict[str, Any]) -> str:
         method = "kayıt sinyallerine göre numune veya teknik soru seti hazırla"
 
     mid = f"{role_name} rolünü doğrula ve hedefle"
-    line = f"{fire}{raw_dec or 'Belirsiz'} → {mid} → {method}"
+    dec_show = raw_dec if raw_dec else "VERİ EKSİK"
+    if dec_show.strip().lower() in ("belirsiz", "—"):
+        dec_show = "VERİ EKSİK"
+    line = f"{fire}{dec_show} → {mid} → {method}"
     return _fmt_truncate(line, 120)
 
 
@@ -318,13 +320,12 @@ class ResearchTargetDialog(QDialog):
             ai_l = QVBoxLayout(tab_ai)
             ai_l.setContentsMargins(0, 6, 0, 0)
             ai_l.setSpacing(8)
-            ai_title = QLabel("AI destekli öneri (mock)")
+            ai_title = QLabel("AI destekli öneri")
             ai_title.setObjectName("DialogSubtitle")
             ai_help = QLabel(
-                "Bu sekme, girdiğiniz firma adı ve web gibi temel alanlara göre "
-                "sektör, üretim yapısı, ürün uyumu sinyali ve satışa dair kısa öneriler üretir. "
-                "Sonuçlar otomatik doğrulanmaz; «Forma Uygula» ile yalnızca boş alanlara yazılır. "
-                "Kayıt sırasında AI çıktısı JSON olarak hedefe eklenir (OpenAI kapalıyken yerel mock)."
+                "• Sektör, üretim yapısı ve ürün uyumu tahmini üretir\n"
+                "• «Forma Uygula» ile boş alanları doldurur\n"
+                "• Kayıt sırasında JSON olarak saklanır"
             )
             ai_help.setWordWrap(True)
             ai_help.setStyleSheet("color: #64748b; font-size: 12px;")
@@ -733,11 +734,11 @@ class ResearchTargetsPage(QWidget):
         self._ozet_oneri_frame = QFrame()
         self._ozet_oneri_frame.setObjectName("ResearchOneriCard")
         self._ozet_oneri_frame.setStyleSheet(
-            "QFrame#ResearchOneriCard { background-color: #eff6ff; border: 2px solid #2563eb; "
-            "border-radius: 10px; }"
+            "QFrame#ResearchOneriCard { background-color: #EFF6FF; border: 2px solid #2563EB; "
+            "border-radius: 8px; padding: 16px; }"
         )
         ofl = QVBoxLayout(self._ozet_oneri_frame)
-        ofl.setContentsMargins(12, 10, 12, 10)
+        ofl.setContentsMargins(4, 2, 4, 2)
         ofl.setSpacing(6)
         _ot = QLabel("Öneri")
         _ot.setStyleSheet("font-weight: 700; color: #1e40af; font-size: 12px;")
@@ -750,11 +751,11 @@ class ResearchTargetsPage(QWidget):
         self._ozet_neden_frame = QFrame()
         self._ozet_neden_frame.setObjectName("ResearchNedenCard")
         self._ozet_neden_frame.setStyleSheet(
-            "QFrame#ResearchNedenCard { background-color: #f8fafc; border-left: 4px solid #64748b; "
-            "border-radius: 6px; }"
+            "QFrame#ResearchNedenCard { background-color: #F9FAFB; border-left: 4px solid #6B7280; "
+            "border-radius: 8px; padding: 12px 14px; }"
         )
         nfl = QVBoxLayout(self._ozet_neden_frame)
-        nfl.setContentsMargins(10, 8, 10, 8)
+        nfl.setContentsMargins(2, 0, 2, 0)
         nfl.setSpacing(4)
         _nt = QLabel("Neden (etki)")
         _nt.setStyleSheet("font-weight: 600; color: #475569; font-size: 11px;")
@@ -1417,7 +1418,7 @@ class ResearchTargetsPage(QWidget):
         thin_signals = len((t.product_fit_signals or "").strip()) < 12
         missing_sector = not (t.sector or "").strip()
 
-        static_gap_msg = "Veri eksik. Website, sektör ve ürün uyumu sinyalleri eklenmeli."
+        static_gap_msg = "Veri eksik → yanlış hedef riski → zaman kaybı"
         if score == 0 or missing_web or missing_sector or thin_signals:
             return static_gap_msg, static_gap_msg
 
@@ -1888,8 +1889,13 @@ class ResearchTargetsPage(QWidget):
         self._ozet_kayit_lbl.setText("<br/>".join(lines_html))
 
         dec_raw = (data.get("decision") or "").strip()
-        if not dec_raw or dec_raw == "—":
-            dec_display = "Belirsiz"
+        dec_low = dec_raw.lower()
+        if (
+            not dec_raw
+            or dec_raw == "—"
+            or dec_low in ("belirsiz", "—")
+        ):
+            dec_display = "VERİ EKSİK"
         else:
             dec_display = dec_raw
         self._ozet_decision_big.setText(f"Karar: {dec_display}")
@@ -1925,12 +1931,11 @@ class ResearchTargetsPage(QWidget):
             role = "Satınalma/teknik sorumlu"
             if (t.sector or "").strip():
                 oneri = _fmt_truncate(
-                    f"Belirsiz → {role} hedefle → {t.sector} için teknik netleştirme soruları hazırla", 120
+                    f"VERİ EKSİK → {role} hedefle → {t.sector} için teknik netleştirme soruları hazırla",
+                    120,
                 )
             else:
-                oneri = (
-                    "Belirsiz → Web ve ürün sinyali ekle → ardından «AI Analiz Et» ve «Skoru Kaydet»"
-                )
+                oneri = "VERİ EKSİK → Web ekle → ürün sinyali yaz → AI analiz ile karar üret"
 
         self._ozet_oneri_lbl.setText(oneri)
 
