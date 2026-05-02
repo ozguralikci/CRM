@@ -35,8 +35,14 @@ _UNIFIED_STR_KEYS: tuple[str, ...] = (
     "production_structure",
     "product_fit_signals",
     "notes_suggestion",
+    "technical_usage",
+    "sealing_need",
+    "sealing_where",
+    "sales_difficulty",
 )
-_UNIFIED_LIST_KEYS: tuple[str, ...] = ("products", "departments", "risks")
+_UNIFIED_LIST_KEYS: tuple[str, ...] = ("products", "departments", "risks", "surlas_fit_products")
+
+_DECISION_ALLOWED = frozenset({"TAKİP ET", "BEKLET", "ELE", "belirsiz"})
 
 
 def _ensure_mock_provider_for_dialog_only() -> None:
@@ -60,6 +66,41 @@ def _as_str_list(val: Any) -> list[str]:
     return []
 
 
+def _as_fit_score_percent(val: Any) -> int:
+    if val is None or val == "":
+        return 0
+    if isinstance(val, bool):
+        raise AiAnalysisSchemaError("fit_score_percent geçersiz.")
+    if isinstance(val, (int, float)):
+        n = int(round(float(val)))
+    else:
+        try:
+            n = int(str(val).strip())
+        except ValueError as e:
+            raise AiAnalysisSchemaError("fit_score_percent sayı değil.") from e
+    return max(0, min(100, n))
+
+
+def _normalize_decision(val: Any) -> str:
+    s = _as_str(val)
+    if not s:
+        return "belirsiz"
+    up = s.upper()
+    if up in ("TAKİP ET", "TAKIP ET"):
+        return "TAKİP ET"
+    if up == "BEKLET":
+        return "BEKLET"
+    if up == "ELE":
+        return "ELE"
+    if s.lower() == "belirsiz":
+        return "belirsiz"
+    if s in _DECISION_ALLOWED:
+        return s
+    raise AiAnalysisSchemaError(
+        f"decision geçersiz: {s!r} (TAKİP ET, BEKLET, ELE veya belirsiz olmalı)"
+    )
+
+
 def validate_and_normalize_panel_ai_dict(raw: dict[str, Any]) -> dict[str, Any]:
     """Panel/OpenAI birleşik şema — DB öncesi doğrulama."""
     if not isinstance(raw, dict):
@@ -80,7 +121,15 @@ def validate_and_normalize_panel_ai_dict(raw: dict[str, Any]) -> dict[str, Any]:
             raise AiAnalysisSchemaError(f"Dizi bekleniyordu: {key}")
         out[key] = _as_str_list(raw[key])
 
-    out["schema_version"] = "ai_analysis_v1"
+    if "fit_score_percent" not in raw:
+        raise AiAnalysisSchemaError("Eksik alan: fit_score_percent")
+    out["fit_score_percent"] = _as_fit_score_percent(raw["fit_score_percent"])
+
+    if "decision" not in raw:
+        raise AiAnalysisSchemaError("Eksik alan: decision")
+    out["decision"] = _normalize_decision(raw["decision"])
+
+    out["schema_version"] = "ai_analysis_v2"
     return out
 
 
@@ -106,17 +155,28 @@ def format_panel_ai_user_message(exc: BaseException) -> str:
 
 def _mock_panel_unified_payload() -> dict[str, Any]:
     return {
-        "summary": "Bu firma üretim odaklıdır.",
+        "summary": "Üretim hattında sıvı/gaz bağlantılarında teknik conta ihtimali; kanıt sınırlı.",
         "sector": "Otomotiv Yan Sanayi",
-        "products": ["Conta", "O-ring"],
-        "departments": ["Satın alma", "Üretim"],
-        "sales_strategy": "Teknik satış yaklaşımı önerilir.",
-        "risks": ["Fiyat rekabeti"],
-        "first_message": "Merhaba, üretim süreçlerinize çözüm sunmak isteriz.",
+        "products": ["Statik conta", "FKM O-ring"],
+        "departments": ["Satın alma", "Üretim bakım"],
+        "sales_strategy": "Teknik veri ve numune onayı ile satın alma ile temas.",
+        "risks": ["Fiyat rekabeti", "OEM onay sureci"],
+        "first_message": (
+            "Üretim hatlarınızdaki sızdırmazlık ihtiyacı için teknik kısa değerlendirme paylaşabilir miyiz?"
+        ),
         "company_type": "Üretici",
         "production_structure": "Seri üretim",
         "product_fit_signals": "Conta, O-ring, sızdırmazlık elemanları kullanımı",
-        "notes_suggestion": "Sızdırmazlık çözümleri sunulabilir.",
+        "notes_suggestion": "Hat bazlı conta tipi ve standart (DIN/ISO) netleştirin.",
+        "technical_usage": (
+            "Montaj istasyonları ve hidrolik/pnömatik hat bağlantıları (kayıtta detay yok; belirsiz)."
+        ),
+        "sealing_need": "belirsiz",
+        "sealing_where": "belirsiz",
+        "surlas_fit_products": ["Kauçuk conta", "O-ring"],
+        "sales_difficulty": "Orta — teknik onay ve çoklu tedarikçi rekabeti.",
+        "fit_score_percent": 55,
+        "decision": "BEKLET",
     }
 
 

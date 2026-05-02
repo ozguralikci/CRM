@@ -43,6 +43,16 @@ UNIFIED_AI_ANALYSIS_JSON_SCHEMA: dict[str, Any] = {
         "production_structure": {"type": "string"},
         "product_fit_signals": {"type": "string"},
         "notes_suggestion": {"type": "string"},
+        "technical_usage": {"type": "string"},
+        "sealing_need": {"type": "string"},
+        "sealing_where": {"type": "string"},
+        "surlas_fit_products": {"type": "array", "items": {"type": "string"}},
+        "sales_difficulty": {"type": "string"},
+        "fit_score_percent": {"type": "integer", "minimum": 0, "maximum": 100},
+        "decision": {
+            "type": "string",
+            "enum": ["TAKİP ET", "BEKLET", "ELE", "belirsiz"],
+        },
     },
     "required": [
         "summary",
@@ -56,6 +66,13 @@ UNIFIED_AI_ANALYSIS_JSON_SCHEMA: dict[str, Any] = {
         "production_structure",
         "product_fit_signals",
         "notes_suggestion",
+        "technical_usage",
+        "sealing_need",
+        "sealing_where",
+        "surlas_fit_products",
+        "sales_difficulty",
+        "fit_score_percent",
+        "decision",
     ],
 }
 

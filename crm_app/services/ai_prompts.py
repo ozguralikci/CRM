@@ -1,4 +1,4 @@
-"""Araştırma hedefi için AI promptları (FAZ 3C-B)."""
+"""Araştırma hedefi için AI promptları (FAZ 3C-B / 3D)."""
 
 from __future__ import annotations
 
@@ -18,16 +18,20 @@ def build_research_target_ai_messages(target: ResearchTarget, max_chars: int = 2
     User bloğu toplam uzunluğu max_chars'ı aşmamalı.
     """
     system = (
-        "Sen Sürlas firması için B2B satış ve pazar araştırması asistanısın. "
-        "Sürlas kauçuk conta, O-ring, teknik kauçuk parça ve sızdırmazlık çözümleri sunar. "
-        "Yanıtın tamamı Türkçe olmalı. Kesin satış garantisi veya yasal bağlayıcı iddia verme. "
-        "Veri eksikse belirsizlikleri açıkça belirt. "
-        "Çıktı yalnızca istenen JSON şemasına uygun tek bir nesne olmalı; "
-        "markdown kod çiti veya açıklama metni ekleme."
+        "Sen Sürlas (kauçuk conta, O-ring, teknik kauçuk parça, sızdırmazlık) için "
+        "endüstriyel B2B satış analisti olarak çalışıyorsun. "
+        "Genel pazarlama lafı veya belirsiz övgü üretme; teknik ve satış odaklı yaz. "
+        "Verilen kayıttaki bilgilerle Sürlas ürün portföyü (conta, O-ring, sızdırmazlık, teknik kauçuk) "
+        "arasında somut eşleştirme yap; kanıt yoksa uydurma, alanlarda 'belirsiz' kullan. "
+        "Kesin satış garantisi veya yasal iddia yok. "
+        "Çıktı yalnızca tek bir JSON nesnesi; şemadaki tüm anahtarlar zorunlu; markdown veya açıklama dışı metin yok. "
+        "decision yalnızca şu değerlerden biri: TAKİP ET, BEKLET, ELE, belirsiz. "
+        "fit_score_percent 0–100 tamsayı; veriye dayanarak makul tahmin, kanıt yoksa düşük veya belirsiz karar tercih et."
     )
 
     parts: list[str] = [
-        "Aşağıdaki hedef firma kaydını analiz et ve yalnızca talimat edilen JSON alanlarını doldur.",
+        "Kaydı endüstriyel kullanım (makine/proses), sızdırmazlık ihtiyacı, Sürlas ürün uyumu, "
+        "satış zorluğu ve portföy kararı açısından analiz et. Özet alanı kısa ve teknik odaklı olsun.",
         "",
         f"Firma adı: {_clip(target.name or '', 400)}",
         f"Web sitesi: {_clip(target.website or '', 300)}",

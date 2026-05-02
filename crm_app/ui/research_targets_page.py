@@ -698,7 +698,7 @@ class ResearchTargetsPage(QWidget):
         return lines
 
     def _lines_from_ai_unified_panel_shape(self, data: dict[str, Any]) -> list[str]:
-        """Panel + OpenAI birleşik şema (FAZ 3C-B)."""
+        """Panel birleşik şema (FAZ 3C-B / 3D endüstriyel alanlar)."""
         lines = [
             f"Özet: {data.get('summary', '-')}",
             f"Sektör: {data.get('sector', '-')}",
@@ -706,7 +706,26 @@ class ResearchTargetsPage(QWidget):
             f"Üretim yapısı: {data.get('production_structure', '-')}",
             f"Ürün uyumu sinyalleri: {data.get('product_fit_signals', '-')}",
             "",
-            "Ürün önerileri:",
+            "TEKNİK / KULLANIM",
+            f"Gerçek kullanım alanı (makine/proses): {data.get('technical_usage', '-')}",
+            f"Sızdırmazlık ihtiyacı: {data.get('sealing_need', '-')}",
+            f"Uygulama noktası (hangi bölüm/hat): {data.get('sealing_where', '-')}",
+            "",
+            "SÜRLAS ÜRÜN EŞLEMESİ",
+        ]
+        sfp = data.get("surlas_fit_products")
+        if isinstance(sfp, list) and sfp:
+            for p in sfp:
+                lines.append(f"  • {p}")
+        else:
+            lines.append("  • —")
+        lines += [
+            "",
+            f"Satış zorluğu: {data.get('sales_difficulty', '-')}",
+            f"Uygunluk (AI tahmini %): {data.get('fit_score_percent', '-')}",
+            f"Karar: {data.get('decision', '-')}",
+            "",
+            "Genel ürün / fonksiyon listesi (model):",
         ]
         for p in data.get("products") or []:
             lines.append(f"  • {p}")
