@@ -135,13 +135,13 @@ def _postprocess_website_inference(target: ResearchTarget, out: dict[str, Any]) 
             o["technical_usage"] = (
                 "tahmini: "
                 + "; ".join(labels)
-                + " bağlamında makine/hat bileşenleri ve olası sızdırmazlık noktaları "
-                "(web anahtar sözcük; düşük güven)"
+                + " bağlamında makine ve hat bileşenleri muhtemel, çünkü alan adı veya ad bu endüstriyel "
+                "ipuçlarıyla örtüşüyor (düşük güven)."
             )
         else:
             o["technical_usage"] = (
-                "tahmini: endüstriyel tesis veya makine parkı bileşenleri "
-                "(web domain; içerik okunmadı; düşük güven)"
+                "tahmini: tesis/makine parkı bileşenleri öngörülebilir, çünkü alan adı endüstriyel "
+                "OEM veya tedarik profiline uyar; site içeriği ayrıca okunmadı (düşük güven)."
             )
 
     if _needs_inference_fill(o.get("production_structure", "")):
@@ -152,13 +152,14 @@ def _postprocess_website_inference(target: ResearchTarget, out: dict[str, Any]) 
     if labels:
         if _needs_inference_fill(o.get("sealing_need", "")):
             o["sealing_need"] = (
-                "tahmini: olası — "
+                "tahmini: hat birleşimlerinde sızdırmazlık muhtemel, çünkü "
                 + labels[0]
-                + " hattında bağlantı sızdırmazlığı (düşük güven)"
+                + " çizgisinde basınçlı sıvı/gaz taşıyan bağlantılar sık görülür (düşük güven)."
             )
         if _needs_inference_fill(o.get("sealing_where", "")):
             o["sealing_where"] = (
-                "tahmini: flanş, manşon veya hortum birleşimi (anahtar sözcük ipucu; düşük güven)"
+                "tahmini: flanş, manşon veya hortum birleşimi öne çıkar, çünkü web ipucu "
+                "hat/basınç bileşenlerine işaret ediyor (düşük güven)."
             )
 
     return o
@@ -275,10 +276,17 @@ def _mock_panel_unified_payload(target: ResearchTarget | None = None) -> dict[st
         "product_fit_signals": "Conta, O-ring, sızdırmazlık elemanları kullanımı",
         "notes_suggestion": "Hat bazlı conta tipi ve standart (DIN/ISO) netleştirin.",
         "technical_usage": (
-            "tahmini: kayıtta web yok; tipik imalat/montaj bileşenleri (düşük güven)."
+            "tahmini: imalat/montaj hattı bileşenleri muhtemel, çünkü kayıtta conta/O-ring sinyali var "
+            "ve bu parçalar tipik olarak basınçlı birleşimlerde kullanılır (düşük güven)."
         ),
-        "sealing_need": "tahmini: kayıt ince; teknik görüşmede netleştirin (düşük güven).",
-        "sealing_where": "tahmini: uygulama yeri teknik tespit gerekir (düşük güven).",
+        "sealing_need": (
+            "tahmini: bağlantı sızdırmazlığı ihtimali yüksek olabilir, çünkü ürün uyumu metni conta/O-ring "
+            "geçiyor (kayıt tek başına kanıt değil; düşük güven)."
+        ),
+        "sealing_where": (
+            "tahmini: kapak/flanş veya hortum birleşimi olası, çünkü bu bileşenler genelde sızdırmazlık "
+            "noktası olarak öne çıkar (teknik teyit gerekir; düşük güven)."
+        ),
         "surlas_fit_products": ["Kauçuk conta", "O-ring"],
         "sales_difficulty": "Orta — teknik onay ve çoklu tedarikçi rekabeti.",
         "fit_score_percent": 55,
@@ -302,22 +310,30 @@ def _mock_panel_unified_payload(target: ResearchTarget | None = None) -> dict[st
             base["technical_usage"] = (
                 "tahmini: "
                 + "; ".join(labels)
-                + " bağlamında hat ve birleşim bileşenleri (web; düşük güven)"
+                + " bağlamında hat ve birleşim bileşenleri muhtemel, çünkü web/firma adı bu endüstriyel "
+                "çizgiyle örtüşüyor (düşük güven)."
             )
             base["sealing_need"] = (
-                "tahmini: muhtemel — " + labels[0] + " hattında bağlantı sızdırmazlığı (düşük güven)"
-            )
-            base["sealing_where"] = "tahmini: flanş/manşon veya hat birleşimi (düşük güven)"
-        else:
-            base["technical_usage"] = (
-                "tahmini: endüstriyel tesis veya üretim bileşenleri (web domain; düşük güven)"
-            )
-            base["sealing_need"] = (
-                "tahmini: bağlantı noktalarında conta ihtimali yüksek olabilir "
-                "(web tek başına kanıt değil; düşük güven)"
+                "tahmini: bağlantı sızdırmazlığı muhtemel, çünkü "
+                + labels[0]
+                + " tipi hatlarda basınçlı sıvı/gaz birleşimleri sık görülür (düşük güven)."
             )
             base["sealing_where"] = (
-                "tahmini: uygulama noktası teknik görüşmede netleşmeli (düşük güven)"
+                "tahmini: flanş/manşon veya hat birleşimi öne çıkar, çünkü bu hat tiplerinde "
+                "sızdırmazlık noktaları tipik olarak bu bölgelerdedir (düşük güven)."
+            )
+        else:
+            base["technical_usage"] = (
+                "tahmini: endüstriyel tesis veya üretim bileşenleri olası, çünkü alan adı sanayi tedarikçisi "
+                "profiline uyar (site içeriği ayrıca okunmadı; düşük güven)."
+            )
+            base["sealing_need"] = (
+                "tahmini: bağlantı noktalarında conta ihtimali yüksek olabilir, çünkü üretim yapan "
+                "işletmelerde basınçlı hatlar yaygındır (web tek başına kanıt değil; düşük güven)."
+            )
+            base["sealing_where"] = (
+                "tahmini: uygulama yeri teknik görüşmede netleşmeli; öncelik flanş/kapak birleşimleri olabilir, "
+                "çünkü web tek başına hat detayı vermiyor (düşük güven)."
             )
         base["production_structure"] = "tahmini: seri veya proses destekli üretim/montaj (web; düşük güven)"
     return base

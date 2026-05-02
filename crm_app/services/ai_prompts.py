@@ -64,11 +64,16 @@ def build_research_target_ai_messages(target: ResearchTarget, max_chars: int = 2
         "KESİN edilgen ve kesin fiil kalıplarından kaçın: 'kullanmaktadır', 'kullanılmaktadır', 'ihtiyaç duyulmaktadır', "
         "'gerekmektedir' (çıkarım için); yerine 'muhtemel olarak kullanılır', 'ihtiyaç olasılığı', 'tahmini olarak öngörülür'. "
         "Çıkarılan makine kullanımını asla doğrulanmış gerçek gibi sunma; somut teknik detayı koru ama epistemik olarak yumuşak tut. "
+        "KANIT FARKINDALIĞI: Her teknik çıkarımda neden kısaca yazılmalı. "
+        "technical_usage ve sealing_need alanlarının her biri, olasılık cümlesini EN AZ BİR kısa gerekçe ile bitirmelidir: "
+        "virgül veya '—' veya 'çünkü' ile tek kısa yan cümle (fazla paragraf yok). "
+        "Örnek iyi: '...muhtemeldir, çünkü bu tür üretim hatlarında yüksek basınçlı hidrolik sistemler yaygındır'. "
+        "Kötü: sadece 'kullanılır' / gerekçesiz tek iddia. "
         "technical_usage ZORUNLU: en az iki somut makine veya hat türü; çalışma koşulları (sıcaklık, toz, kimyasal) "
-        "ve bakım / aşınma riski cümleleri; çıkarımsa güven seviyesine göre 'tahmini olarak' / 'muhtemel' / 'yüksek olasılıkla' kullan. "
-        "sealing_where ZORUNLU: metinde açıkça en az iki somut nokta geçsin "
-        "(hidrolik silindir, pompa, vana, pres, kesim hattı, taşıma/konveyör hattı, kapak/flanş/manşon vb.); "
-        "bunlar da çıkarımsa olasılık diliyle bağla. "
+        "ve bakım / aşınma riski; çıkarımsa 'tahmini olarak' / 'muhtemel' / 'yüksek olasılıkla' + yukarıdaki kısa gerekçe. "
+        "sealing_need ZORUNLU: ihtiyaç/olasılık cümlesi + aynı alan içinde tek kısa gerekçe (kayıt veya sektör tipi). "
+        "sealing_where ZORUNLU: en az iki somut nokta (hidrolik silindir, pompa, vana, pres, konveyör, flanş/manşon vb.); "
+        "çıkarımsa olasılık dili; istenirse noktaları gerekçeyle birleştir, ama yine kısa tut. "
         "surlas_fit_products: teknik ürün adları (O-ring, hidrolik conta, düz/statik conta, özel teknik kauçuk parça); "
         "gerekirse yüksek sıcaklığa veya kimyasala dayanım, titreşim sönümleme gibi gereksinimleri ayrı öğe olarak yaz. "
         "sales_strategy: önce teknik ihtiyaç keşfi; numune/ölçü/teknik resim talebi; bakım ve tedarik sürekliliği; "
@@ -96,9 +101,9 @@ def build_research_target_ai_messages(target: ResearchTarget, max_chars: int = 2
         f"Notlar: {_clip(target.notes or '', 600)}",
         "",
         "Alan kuralları (metin içinde yerine getir):",
-        "- technical_usage: somut makine/hat + çalışma ortamı + bakım-aşınma; yasaklı genel laflardan kaçın; "
-        "çıkarım cümlelerinde tahmini/muhtemel/yüksek olasılıkla ile güveni belirt.",
-        "- sealing_where: pompa/vana/pres/konveyör/flanş gibi en az iki somut sızdırmazlık yeri; kesin iddia yok.",
+        "- technical_usage: somut makine/hat + ortam + bakım-aşınma; her ana çıkarım satırının sonunda tek kısa 'çünkü/—' gerekçesi.",
+        "- sealing_need: ihtiyaç/olasılık + tek kısa gerekçe (kayıt veya sektör ortamına atıf); uzun açıklama yok.",
+        "- sealing_where: en az iki somut sızdırmazlık yeri; kesin iddia yok; mümkünse kısa gerekçe ile bağla.",
         "- surlas_fit_products: Sürlas tipi ürünler, teknik sıfatlar mümkünse ayrı liste öğesi; uygunluğu olasılıkla bağla.",
         "- sales_strategy: keşif → numune/resim → süreklilik/arıza azaltma sırası; öneri dili, emir kipi değil.",
     ]
