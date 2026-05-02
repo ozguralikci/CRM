@@ -12,15 +12,20 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QSplitter,
     QSpinBox,
+    QStackedWidget,
     QDoubleSpinBox,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
@@ -62,6 +67,118 @@ except ImportError:
     load_scoring_config = None  # type: ignore[misc, assignment]
 
 
+def _fmt_truncate(text: str, max_len: int = 120) -> str:
+    t = (text or "").strip()
+    if not t:
+        return ""
+    if len(t) <= max_len:
+        return t
+    return t[: max_len - 1] + "…"
+
+
+def _impact_suffix_for_risk(risk: str) -> str:
+    low = risk.lower()
+    if "fiyat" in low or "rekabet" in low:
+        return "marj baskısı ve kayıp teklif riski doğurabilir"
+    if "oem" in low or "onay" in low:
+        return "satış döngüsü uzayabilir veya teklif reddedilebilir"
+    if "tedarik" in low:
+        return "giriş için teknik farklılık şart; yoksa süreç tıkanır"
+    return "satış görüşmelerinde geri çekilme veya kayıp riski taşır"
+
+
+def _build_neden_line(data: dict[str, Any]) -> str:
+    risks = data.get("risks") if isinstance(data.get("risks"), list) else []
+    r0 = str(risks[0]).strip() if risks else ""
+    sd = (data.get("sales_difficulty") or "").strip()
+    if r0:
+        return _fmt_truncate(f"{r0} → {_impact_suffix_for_risk(r0)}", 120)
+    if sd:
+        head = sd.split("—")[0].strip() if "—" in sd else sd[:60]
+        return _fmt_truncate(f"{head} → teklif veya onay aşamasında elenme riski artar", 120)
+    return ""
+
+
+def _build_oneri_line(data: dict[str, Any]) -> str:
+    """[decision] → [eylem/rol] → [yöntem] — max 120 char."""
+    raw_dec = (data.get("decision") or "").strip()
+    d_up = raw_dec.upper()
+    fire = "🔥 " if ("TAKİP" in d_up or "TAKIP" in d_up.replace("İ", "I")) else ""
+
+    deps = data.get("departments") if isinstance(data.get("departments"), list) else []
+    roles = data.get("target_roles") if isinstance(data.get("target_roles"), list) else []
+    role_name = ""
+    if roles:
+        role_name = str(roles[0]).strip()
+    elif deps:
+        role_name = str(deps[0]).strip()
+    if not role_name:
+        role_name = "Satınalma/teknik sorumlu"
+
+    strat = (data.get("sales_strategy") or data.get("sales_approach") or "").strip()
+    fm = (data.get("first_message") or "").strip()
+
+    if strat:
+        tail = strat.split(";")[0].split(".")[0].strip()
+        method = _fmt_truncate(tail, 45) if tail else "teknik ön sorularla temas planla"
+    elif fm:
+        method = "kısa teknik giriş maili ile talep netleştir"
+    else:
+        method = "kayıt sinyallerine göre numune veya teknik soru seti hazırla"
+
+    mid = f"{role_name} rolünü doğrula ve hedefle"
+    line = f"{fire}{raw_dec or '—'} → {mid} → {method}"
+    return _fmt_truncate(line, 120)
+
+
+def _split_strategy_fragments(text: str) -> list[str]:
+    t = (text or "").replace("\n", " ").strip()
+    if not t:
+        return []
+    parts: list[str] = []
+    for chunk in t.replace(". ", ";").split(";"):
+        c = chunk.strip()
+        if c:
+            parts.append(c)
+    return parts[:3]
+
+
+def _build_aksiyon_steps(data: dict[str, Any]) -> list[str]:
+    steps: list[str] = []
+    deps = [str(x).strip() for x in (data.get("departments") or []) if str(x).strip()]
+    roles_tr = [str(x).strip() for x in (data.get("target_roles") or []) if str(x).strip()]
+    role_hint = deps[0] if deps else (roles_tr[0] if roles_tr else "karar verici")
+
+    strat = (data.get("sales_strategy") or data.get("sales_approach") or "").strip()
+    fm = (data.get("first_message") or "").strip()
+
+    steps.append(f"{role_hint} için LinkedIn veya kurumsal hat üzerinden doğru kontağı tespit et")
+
+    if fm:
+        steps.append(
+            f"Kısa teknik özet içeren mail ile ihtiyacı netleştir (konu: sızdırmazlık / conta uyumu)"
+        )
+    for frag in _split_strategy_fragments(strat):
+        if len(steps) >= 4:
+            break
+        if frag and frag not in " ".join(steps):
+            steps.append(_fmt_truncate(frag, 100))
+
+    steps.append("3 iş günü sonra yanıt yoksa tek cümlelik hatırlatma maili gönder")
+
+    out: list[str] = []
+    for s in steps:
+        s = s.strip()
+        if s and s not in out:
+            out.append(s)
+        if len(out) >= 4:
+            break
+
+    while len(out) < 2:
+        out.append("Kayıtta sektör ve ürün sinyalini güncel tut; ardından Skoru Kaydet ile önceliği netleştir")
+    return out[:4]
+
+
 class _PanelAiAnalysisWorker(QThread):
     """Panel «AI Analiz Et» — ağ çağrısı UI thread'ini bloklamaz."""
 
@@ -94,7 +211,7 @@ class ResearchTargetDialog(QDialog):
     def __init__(self, target: ResearchTarget | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Yeni Hedef" if target is None else "Hedefi Duzenle")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(600)
         self._target_id = target.id if target else None
         self._is_new = target is None
         self._ai_suggest_result: dict[str, Any] | None = None
@@ -116,12 +233,6 @@ class ResearchTargetDialog(QDialog):
         subtitle.setWordWrap(True)
         hl.addWidget(title)
         hl.addWidget(subtitle)
-
-        form_card = QFrame()
-        form_card.setObjectName("DialogCard")
-        fl = QFormLayout(form_card)
-        fl.setHorizontalSpacing(14)
-        fl.setVerticalSpacing(10)
 
         self.name_input = QLineEdit(target.name if target else "")
         self.website_input = QLineEdit(target.website if target else "")
@@ -148,39 +259,56 @@ class ResearchTargetDialog(QDialog):
             if ix >= 0:
                 self.status_input.setCurrentIndex(ix)
         self.notes_input = QTextEdit(target.notes if target else "")
-        self.notes_input.setMinimumHeight(88)
+        self.notes_input.setMinimumHeight(120)
 
-        fl.addRow("Firma Adi", self.name_input)
-        fl.addRow("Web Sitesi", self.website_input)
-        fl.addRow("LinkedIn (sirket)", self.linkedin_input)
-        fl.addRow("Ulke", self.country_input)
-        fl.addRow("Sehir", self.city_input)
-        fl.addRow("Sektor", self.sector_input)
-        fl.addRow("Firma Tipi", self.company_type_input)
-        fl.addRow("Uretim Yapisi", self.production_input)
-        fl.addRow("Urun Uyumu Sinyalleri", self.signals_input)
-        fl.addRow("Uygunluk Skoru", self.fit_score_input)
-        fl.addRow("Guven", self.confidence_input)
-        fl.addRow("Durum", self.status_input)
-        fl.addRow("Notlar", self.notes_input)
+        tab_basic = QWidget()
+        fl_basic = QFormLayout(tab_basic)
+        fl_basic.setHorizontalSpacing(14)
+        fl_basic.setVerticalSpacing(10)
+        fl_basic.addRow("Firma Adi", self.name_input)
+        fl_basic.addRow("Web Sitesi", self.website_input)
+        fl_basic.addRow("LinkedIn (sirket)", self.linkedin_input)
+        fl_basic.addRow("Ulke", self.country_input)
+        fl_basic.addRow("Sehir", self.city_input)
+
+        tab_class = QWidget()
+        fl_class = QFormLayout(tab_class)
+        fl_class.setHorizontalSpacing(14)
+        fl_class.setVerticalSpacing(10)
+        fl_class.addRow("Sektor", self.sector_input)
+        fl_class.addRow("Firma Tipi", self.company_type_input)
+        fl_class.addRow("Uretim Yapisi", self.production_input)
+        fl_class.addRow("Urun Uyumu Sinyalleri", self.signals_input)
+        fl_class.addRow("Uygunluk Skoru", self.fit_score_input)
+        fl_class.addRow("Guven", self.confidence_input)
+        fl_class.addRow("Durum", self.status_input)
+
+        tab_notes = QWidget()
+        notes_layout = QVBoxLayout(tab_notes)
+        notes_layout.setContentsMargins(0, 0, 0, 0)
+        notes_layout.addWidget(self.notes_input)
+
+        self._tabs = QTabWidget()
+        self._tabs.addTab(tab_basic, "Temel Bilgi")
+        self._tabs.addTab(tab_class, "Sınıflandırma")
+        self._tabs.setCurrentIndex(0)
 
         self._ai_research_btn: QPushButton | None = None
         self._ai_preview: QTextEdit | None = None
         self._ai_apply_btn: QPushButton | None = None
         if self._is_new:
-            ai_card = QFrame()
-            ai_card.setObjectName("DialogCard")
-            ai_l = QVBoxLayout(ai_card)
-            ai_l.setContentsMargins(18, 14, 18, 14)
+            tab_ai = QWidget()
+            ai_l = QVBoxLayout(tab_ai)
+            ai_l.setContentsMargins(0, 6, 0, 0)
             ai_l.setSpacing(8)
-            ai_title = QLabel("AI destekli öneri")
+            ai_title = QLabel("AI destekli öneri (mock)")
             ai_title.setObjectName("DialogSubtitle")
             self._ai_research_btn = QPushButton("AI ile Araştır ve Analiz Et")
             set_button_role(self._ai_research_btn, "secondary")
             self._ai_research_btn.clicked.connect(self._on_ai_research_clicked)
             self._ai_preview = QTextEdit()
             self._ai_preview.setReadOnly(True)
-            self._ai_preview.setMinimumHeight(140)
+            self._ai_preview.setMinimumHeight(160)
             self._ai_preview.setPlaceholderText("AI çalıştırıldığında önizleme burada görünür.")
             self._ai_apply_btn = QPushButton("Forma Uygula")
             set_button_role(self._ai_apply_btn, "secondary")
@@ -190,7 +318,15 @@ class ResearchTargetDialog(QDialog):
             ai_l.addWidget(self._ai_research_btn)
             ai_l.addWidget(self._ai_preview, 1)
             ai_l.addWidget(self._ai_apply_btn)
-            layout.addWidget(ai_card)
+            self._tabs.addTab(tab_ai, "AI Analiz")
+
+        self._tabs.addTab(tab_notes, "Notlar")
+
+        tab_shell = QFrame()
+        tab_shell.setObjectName("DialogCard")
+        tsl = QVBoxLayout(tab_shell)
+        tsl.setContentsMargins(12, 12, 12, 12)
+        tsl.addWidget(self._tabs)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._on_save)
@@ -205,7 +341,7 @@ class ResearchTargetDialog(QDialog):
         fl2.addWidget(buttons)
 
         layout.addWidget(header)
-        layout.addWidget(form_card, 1)
+        layout.addWidget(tab_shell, 1)
         layout.addWidget(footer)
 
     def _on_save(self) -> None:
@@ -507,12 +643,128 @@ class ResearchTargetsPage(QWidget):
         rl.setContentsMargins(12, 12, 12, 12)
         rl.setSpacing(10)
 
-        detail_title = QLabel("Hedef Detayi")
+        detail_title = QLabel("Satış kararı")
         detail_title.setObjectName("SectionTitle")
-        self.detail_body = QTextEdit()
-        self.detail_body.setReadOnly(True)
-        self.detail_body.setPlaceholderText("Tablodan bir hedef secin.")
-        self.detail_body.setMinimumHeight(280)
+
+        self._detail_stack = QStackedWidget()
+        self._detail_empty = QWidget()
+        _de_l = QVBoxLayout(self._detail_empty)
+        _de_l.setContentsMargins(0, 0, 0, 0)
+        self._detail_empty_label = QLabel("Tablodan bir hedef seçin.")
+        self._detail_empty_label.setWordWrap(True)
+        self._detail_empty_label.setObjectName("DialogSubtitle")
+        _de_l.addWidget(self._detail_empty_label)
+        _de_l.addStretch(1)
+
+        self._detail_tabs = QTabWidget()
+        # —— Özet ——
+        oz_scroll = QScrollArea()
+        oz_scroll.setWidgetResizable(True)
+        oz_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        oz_inner = QWidget()
+        oz_l = QVBoxLayout(oz_inner)
+        oz_l.setSpacing(10)
+        self._ozet_kayit_lbl = QLabel()
+        self._ozet_kayit_lbl.setWordWrap(True)
+        self._ozet_kayit_lbl.setObjectName("DialogSubtitle")
+        self._ozet_kayit_lbl.setTextFormat(Qt.TextFormat.RichText)
+        row_meta = QHBoxLayout()
+        self._ozet_decision_lbl = QLabel()
+        self._ozet_decision_lbl.setWordWrap(True)
+        self._ozet_decision_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._ozet_priority_lbl = QLabel()
+        self._ozet_priority_lbl.setWordWrap(True)
+        self._ozet_priority_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._ozet_fit_ai_lbl = QLabel()
+        self._ozet_fit_ai_lbl.setWordWrap(True)
+        self._ozet_diff_lbl = QLabel()
+        self._ozet_diff_lbl.setWordWrap(True)
+        row_meta.addWidget(self._ozet_decision_lbl, 1)
+        row_meta.addWidget(self._ozet_priority_lbl, 0)
+        oz_l.addWidget(self._ozet_kayit_lbl)
+        oz_l.addLayout(row_meta)
+        oz_l.addWidget(self._ozet_fit_ai_lbl)
+        oz_l.addWidget(self._ozet_diff_lbl)
+
+        gb_oneri = QGroupBox("Öneri")
+        ol = QVBoxLayout(gb_oneri)
+        self._ozet_oneri_lbl = QLabel()
+        self._ozet_oneri_lbl.setWordWrap(True)
+        ol.addWidget(self._ozet_oneri_lbl)
+        gb_neden = QGroupBox("Neden (etki)")
+        nl = QVBoxLayout(gb_neden)
+        self._ozet_neden_lbl = QLabel()
+        self._ozet_neden_lbl.setWordWrap(True)
+        nl.addWidget(self._ozet_neden_lbl)
+        self._ozet_empty_hint = QLabel()
+        self._ozet_empty_hint.setWordWrap(True)
+        self._ozet_empty_hint.setObjectName("DialogSubtitle")
+        self._ozet_empty_hint.setVisible(False)
+        oz_l.addWidget(gb_oneri)
+        oz_l.addWidget(gb_neden)
+        oz_l.addWidget(self._ozet_empty_hint)
+        gb_skor = QGroupBox("Skor özeti (kurallar)")
+        skl = QVBoxLayout(gb_skor)
+        self._ozet_skor_lbl = QLabel()
+        self._ozet_skor_lbl.setWordWrap(True)
+        skl.addWidget(self._ozet_skor_lbl)
+        oz_l.addWidget(gb_skor)
+        oz_l.addStretch(1)
+        oz_scroll.setWidget(oz_inner)
+        self._detail_tabs.addTab(oz_scroll, "Özet")
+
+        # —— Teknik ——
+        tech_w = QWidget()
+        t_l = QVBoxLayout(tech_w)
+        t_l.setSpacing(8)
+        self._tech_usage = QGroupBox("Teknik kullanım")
+        self._tech_usage_body = QLabel()
+        self._tech_usage_body.setWordWrap(True)
+        _t1 = QVBoxLayout(self._tech_usage)
+        _t1.addWidget(self._tech_usage_body)
+        self._tech_seal = QGroupBox("Sızdırmazlık ihtiyacı")
+        self._tech_seal_body = QLabel()
+        self._tech_seal_body.setWordWrap(True)
+        _t2 = QVBoxLayout(self._tech_seal)
+        _t2.addWidget(self._tech_seal_body)
+        self._tech_where = QGroupBox("Uygulama noktası")
+        self._tech_where_body = QLabel()
+        self._tech_where_body.setWordWrap(True)
+        _t3 = QVBoxLayout(self._tech_where)
+        _t3.addWidget(self._tech_where_body)
+        t_l.addWidget(self._tech_usage)
+        t_l.addWidget(self._tech_seal)
+        t_l.addWidget(self._tech_where)
+        t_l.addStretch(1)
+        self._detail_tabs.addTab(tech_w, "Teknik Analiz")
+
+        # —— Satış fırsatı ——
+        sf_scroll = QScrollArea()
+        sf_scroll.setWidgetResizable(True)
+        sf_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        sf_inner = QWidget()
+        sf_l = QVBoxLayout(sf_inner)
+        self._sales_txt = QTextEdit()
+        self._sales_txt.setReadOnly(True)
+        self._sales_txt.setFrameShape(QFrame.Shape.NoFrame)
+        self._sales_txt.setMinimumHeight(200)
+        self._sales_txt.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        sf_l.addWidget(self._sales_txt)
+        sf_scroll.setWidget(sf_inner)
+        self._detail_tabs.addTab(sf_scroll, "Satış Fırsatı")
+
+        # —— Aksiyon ——
+        ak_w = QWidget()
+        ak_l = QVBoxLayout(ak_w)
+        self._aksiyon_txt = QTextEdit()
+        self._aksiyon_txt.setReadOnly(True)
+        self._aksiyon_txt.setFrameShape(QFrame.Shape.NoFrame)
+        self._aksiyon_txt.setMinimumHeight(200)
+        ak_l.addWidget(self._aksiyon_txt)
+        self._detail_tabs.addTab(ak_w, "Aksiyon")
+
+        self._detail_stack.addWidget(self._detail_empty)
+        self._detail_stack.addWidget(self._detail_tabs)
 
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(0, 0, 0, 0)
@@ -550,7 +802,7 @@ class ResearchTargetsPage(QWidget):
         ai_btn_row.addStretch(1)
 
         rl.addWidget(detail_title)
-        rl.addWidget(self.detail_body, 1)
+        rl.addWidget(self._detail_stack, 1)
         rl.addLayout(btn_row)
         rl.addLayout(ai_btn_row)
 
@@ -603,7 +855,7 @@ class ResearchTargetsPage(QWidget):
                 action_label="Yeni Hedef Ekle",
                 action_handler=self.add_target,
             )
-            self.detail_body.clear()
+            self._detail_stack.setCurrentIndex(0)
             self.save_score_btn.setEnabled(False)
             self.detail_breakdown_btn.setEnabled(False)
             self.ai_analyze_btn.setEnabled(False)
@@ -639,7 +891,7 @@ class ResearchTargetsPage(QWidget):
                     item.setForeground(self._status_fg(status_key))
                 self.table.setItem(row, col, item)
         self.table.resizeColumnsToContents()
-        self.detail_body.clear()
+        self._detail_stack.setCurrentIndex(0)
         pid = preserve_target_id
         if pid is None and len(self._rows) == 1:
             pid = self._rows[0].id
@@ -1441,7 +1693,7 @@ class ResearchTargetsPage(QWidget):
     def _on_selection_changed(self) -> None:
         row = self._current_row_index()
         if row is None or row < 0 or row >= len(self._rows):
-            self.detail_body.clear()
+            self._detail_stack.setCurrentIndex(0)
             self._sync_save_score_button()
             self._sync_detail_breakdown_button()
             self._sync_ai_buttons()
@@ -1449,62 +1701,164 @@ class ResearchTargetsPage(QWidget):
         self._populate_detail(row)
         self._sync_save_score_button()
 
+    def _get_display_ai_dict(self, t: ResearchTarget) -> dict[str, Any]:
+        tid = t.id
+        prev = self._ai_preview_by_target_id.get(tid)
+        if isinstance(prev, dict):
+            return dict(prev)
+        raw = (getattr(t, "ai_analysis_json", None) or "").strip()
+        if not raw:
+            return {}
+        try:
+            d = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return d if isinstance(d, dict) else {}
+
+    def _ozet_sparse_record(self, t: ResearchTarget) -> bool:
+        return not (t.website or "").strip() or len((t.product_fit_signals or "").strip()) < 8
+
+    def _fill_teknik_tab(self, data: dict[str, Any]) -> None:
+        def blk(key: str) -> str:
+            v = (data.get(key) or "").strip()
+            return _fmt_truncate(v, 320) if v else "—"
+
+        self._tech_usage_body.setText(blk("technical_usage"))
+        self._tech_seal_body.setText(blk("sealing_need"))
+        self._tech_where_body.setText(blk("sealing_where"))
+
+    def _fill_sales_firsat_tab(self, t: ResearchTarget, data: dict[str, Any]) -> None:
+        blocks: list[str] = []
+        summ = (data.get("summary") or "").strip()
+        if summ:
+            blocks.append("Neden satılabilir\n• " + _fmt_truncate(summ, 280))
+
+        prods = data.get("surlas_fit_products") if isinstance(data.get("surlas_fit_products"), list) else []
+        if not prods:
+            prods = data.get("products") if isinstance(data.get("products"), list) else []
+        if prods:
+            blocks.append(
+                "Hangi ürünler\n" + "\n".join(f"• {p}" for p in [str(x) for x in prods][:14])
+            )
+
+        deps = data.get("departments") if isinstance(data.get("departments"), list) else []
+        if deps:
+            blocks.append("Hangi departman\n" + "\n".join(f"• {d}" for d in [str(x) for x in deps][:10]))
+
+        risks = data.get("risks") if isinstance(data.get("risks"), list) else []
+        if risks:
+            blocks.append("Riskler\n" + "\n".join(f"• {r}" for r in [str(x) for x in risks][:10]))
+
+        if not blocks:
+            blocks.append(
+                "Kayıt ve AI çıktısı geldikçe bu sekme dolar.\n\n"
+                "Şimdi: Web ve ürün sinyali ekleyin → «AI Analiz Et» veya «Skoru Kaydet»."
+            )
+        self._sales_txt.setPlainText("\n\n".join(blocks))
+
+    def _fill_aksiyon_tab(self, t: ResearchTarget, data: dict[str, Any]) -> None:
+        if data and (
+            data.get("sales_strategy")
+            or data.get("sales_approach")
+            or data.get("first_message")
+            or data.get("departments")
+            or data.get("target_roles")
+        ):
+            steps = _build_aksiyon_steps(data)
+        else:
+            steps = [
+                "Sektör + ürün sinyali (min. 12 karakter) girerek kaydı güçlendir",
+                "«AI Analiz Et» ile karar ve aksiyon önerilerini üret (ortam/koşullar için uyarıya bakın)",
+                "3 gün içinde «Skoru Kaydet» ile önceliği kalıcılaştır; «Detayı gör» ile kural analizini incele",
+            ]
+        self._aksiyon_txt.setPlainText("\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps)))
+
     def _populate_detail(self, row: int) -> None:
         if row < 0 or row >= len(self._rows):
-            self.detail_body.clear()
+            self._detail_stack.setCurrentIndex(0)
             self.detail_breakdown_btn.setEnabled(False)
             self._current_breakdown_for_dialog = None
             self.ai_analyze_btn.setEnabled(False)
             self.ai_save_analysis_btn.setEnabled(False)
             return
         t = self._rows[row]
-        comment, suggestion = self._build_fit_comment(t)
+        self._detail_stack.setCurrentIndex(1)
+        self._detail_tabs.setCurrentIndex(0)
+
+        data = self._get_display_ai_dict(t)
+        ks = int(t.fit_score or 0)
+        band = self._panel_score_band_label(ks)
         sk = (t.status or "new").strip().lower()
         status_tr = self._status_label_tr(sk)
-        ks = int(t.fit_score or 0)
-        lines = [
-            "GENEL BİLGİ",
-            f"Firma: {t.name}",
-            f"Web: {t.website or '-'}",
-            f"LinkedIn: {t.linkedin_company_url or '-'}",
-            f"Konum: {t.city or '-'}, {t.country or '-'}",
-            f"Sektör: {t.sector or '-'}",
-            f"Firma tipi: {t.company_type or '-'}",
-            f"Üretim yapısı: {t.production_structure or '-'}",
-            f"Kayıtlı skor: {ks} → {self._panel_score_band_label(ks)}  |  Güven: {t.confidence:.1f}",
-            f"Durum: {status_tr}",
-            "",
-            "",
-            "UYGUNLUK DEĞERLENDİRMESİ",
-            comment,
-            "",
-            "",
-            "SONRAKİ ADIM",
-            suggestion,
-            "",
-            "",
-            "Bu firmayı analiz etmek için:",
-            "1. Sektör gir",
-            "2. Ürün uyumu sinyali ekle",
-            "3. Skoru Kaydet",
-            "",
-            "",
-            "SKOR ANALİZİ",
-            *self._build_skor_analizi_section(t),
-            "",
-            "",
-            "AI DEĞERLENDİRMESİ",
-            *self._build_ai_assessment_section(t),
-            "",
-            "",
-            "ÜRÜN UYUMU SİNYALLERİ",
-            t.product_fit_signals or "-",
-            "",
-            "",
-            "NOTLAR",
-            t.notes or "-",
+
+        loc = f"{t.city or '-'}, {t.country or '-'}"
+        lines_html = [
+            f"<b>{t.name}</b>",
+            f"{loc} · Web: {t.website or '—'} · Durum: {status_tr}",
         ]
-        self.detail_body.setPlainText("\n".join(lines))
+        sig = (t.product_fit_signals or "").strip()
+        if sig:
+            lines_html.append(f"Ürün sinyali: {_fmt_truncate(sig, 100)}")
+        notes = (t.notes or "").strip()
+        if notes:
+            lines_html.append(f"Not: {_fmt_truncate(notes, 100)}")
+        self._ozet_kayit_lbl.setText("<br/>".join(lines_html))
+
+        dec_raw = (data.get("decision") or "").strip()
+        self._ozet_decision_lbl.setText(f"<b>Karar</b> {dec_raw or '—'}")
+        self._ozet_priority_lbl.setText(f"Öncelik: <b>{band}</b><br/>Skor: {ks}")
+
+        fp = data.get("fit_score_percent")
+        if fp is not None and str(fp).strip() != "":
+            self._ozet_fit_ai_lbl.setText(f"AI uygunluk (tahmini %): {fp}")
+            self._ozet_fit_ai_lbl.setVisible(True)
+        else:
+            self._ozet_fit_ai_lbl.clear()
+            self._ozet_fit_ai_lbl.setVisible(False)
+
+        sd_short = (data.get("sales_difficulty") or "").strip()
+        self._ozet_diff_lbl.setText(
+            f"Satış zorluğu: {_fmt_truncate(sd_short, 200)}" if sd_short else "Satış zorluğu: —"
+        )
+
+        oneri = _build_oneri_line(data) if data else ""
+        if not oneri:
+            role = "Satınalma/teknik sorumlu"
+            if (t.sector or "").strip():
+                oneri = _fmt_truncate(
+                    f"— → {role} hedefle → {t.sector} için teknik netleştirme soruları hazırla", 120
+                )
+            else:
+                oneri = "— → Web ve ürün sinyali ekle → ardından AI analizi ve skor"
+
+        self._ozet_oneri_lbl.setText(oneri)
+
+        neden = _build_neden_line(data) if data else ""
+        if not neden:
+            comment, _sugg = self._build_fit_comment(t)
+            neden = _fmt_truncate(comment, 120) if comment else ""
+
+        self._ozet_neden_lbl.setText(neden or "—")
+
+        sparse = self._ozet_sparse_record(t) or not data
+        self._ozet_empty_hint.setVisible(bool(sparse))
+        if sparse:
+            self._ozet_empty_hint.setText(
+                "Veri eksik:\n"
+                "→ Web ekle\n"
+                "→ Ürün sinyali gir\n"
+                "→ AI analizi çalıştır"
+            )
+        else:
+            self._ozet_empty_hint.clear()
+
+        sk_lines = self._build_skor_analizi_section(t)
+        self._ozet_skor_lbl.setText("\n".join(sk_lines[:10]))
+
+        self._fill_teknik_tab(data)
+        self._fill_sales_firsat_tab(t, data)
+        self._fill_aksiyon_tab(t, data)
+
         self._sync_detail_breakdown_button()
         self._sync_ai_buttons()
 
